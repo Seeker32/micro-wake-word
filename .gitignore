@@ -145,6 +145,9 @@ trained_models/
 notebooks/*/
 
 training_parameters.yaml
+training_parameters_licensed_inputs.yaml
+/licensed_data_v1/
+/licensed_features_v1/
 
 *.npy
 *.pb

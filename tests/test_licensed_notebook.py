@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 
 NOTEBOOK = Path(__file__).resolve().parents[1] / "notebooks/basic_training_notebook.ipynb"
+AUGMENTATION_CELL = "XW3bmbI5-JAz"
 NEGATIVE_FEATURES_CELL = "1pGuJDPyp3ax"
 TRAINING_CONFIG_CELL = "Ii1A14GsGVQT"
 
@@ -69,11 +70,26 @@ class LicensedNotebookTests(unittest.TestCase):
                 root = Path("licensed_data_v1/prepared")
                 root.mkdir(parents=True)
                 (root / "manifest.json").write_text('{"files": []}')
-                namespace = {"data_root": root, "Clips": Clips,
-                             "SpectrogramGeneration": SpectrogramGeneration}
-                with patch.dict("sys.modules", {"mmap_ninja.ragged": ragged, "yaml": yaml}):
+                namespace = {}
+                modules = {
+                    "microwakeword.audio.augmentation": types.SimpleNamespace(
+                        Augmentation=lambda **kwargs: kwargs
+                    ),
+                    "microwakeword.audio.clips": types.SimpleNamespace(Clips=Clips),
+                    "microwakeword.audio.spectrograms": types.SimpleNamespace(
+                        SpectrogramGeneration=SpectrogramGeneration
+                    ),
+                    "mmap_ninja.ragged": ragged,
+                    "yaml": yaml,
+                }
+                with patch.dict("sys.modules", modules):
+                    exec(self.cell_source(AUGMENTATION_CELL), namespace)
                     exec(self.cell_source(NEGATIVE_FEATURES_CELL), namespace)
                     exec(self.cell_source(TRAINING_CONFIG_CELL), namespace)
+                self.assertEqual(set(namespace["augmenters"]), {"training", "validation", "testing"})
+                for split, augmenter in namespace["augmenters"].items():
+                    self.assertEqual(augmenter["background_paths"], [str(root / "noise" / split)])
+                    self.assertEqual(augmenter["impulse_paths"], [str(root / "rirs")])
                 self.assertEqual(len(generated), 10)
                 for corpus in ("speech", "noise"):
                     for split in ("training", "validation", "testing"):
@@ -94,7 +110,7 @@ class LicensedNotebookTests(unittest.TestCase):
                 os.chdir(old_cwd)
 
     def test_changed_python_cells_compile_and_legacy_sources_are_absent(self):
-        for cell_id in ("YJRG4Qvo9nXG", "XW3bmbI5-JAz", "D7BHcY1mEGbK",
+        for cell_id in ("YJRG4Qvo9nXG", AUGMENTATION_CELL, "D7BHcY1mEGbK",
                         NEGATIVE_FEATURES_CELL, TRAINING_CONFIG_CELL):
             compile(self.cell_source(cell_id), f"cell-{cell_id}", "exec")
         source = "\n".join("".join(cell["source"]) for cell in self.cells)

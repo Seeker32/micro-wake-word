@@ -146,8 +146,10 @@ notebooks/*/
 
 training_parameters.yaml
 training_parameters_licensed_inputs.yaml
+training_parameters_hey_kamana.yaml
 /licensed_data_v1/
 /licensed_features_v1/
+train-result
 
 *.npy
 *.pb

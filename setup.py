@@ -7,7 +7,7 @@ setuptools.setup(
     name="microwakeword",
     version="0.1.0",
     install_requires=[
-        "audiomentations",
+        "audiomentations>=0.41.0",
         "audio_metadata",
         "datasets",
         "mmap_ninja",

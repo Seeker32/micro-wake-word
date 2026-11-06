@@ -1,3 +1,4 @@
+from contextlib import redirect_stdout
 import csv
 import io
 import json
@@ -126,11 +127,31 @@ class LicensedDataTests(unittest.TestCase):
     def test_bad_download_never_enters_cache(self):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "audio.zip"
-            with patch.object(data, "urlopen", return_value=io.BytesIO(b"truncated")):
+            source = io.BytesIO(b"truncated")
+            source.headers = {}
+            with patch.object(data, "urlopen", return_value=source):
                 with self.assertRaisesRegex(ValueError, "Checksum mismatch"):
                     data.download("https://example.org/audio.zip", target, "0" * 32)
             self.assertFalse(target.exists())
             self.assertFalse(target.with_suffix(".zip.part").exists())
+
+    def test_download_reports_progress_with_or_without_content_length(self):
+        payload = b"x" * (2 * 1024 * 1024)
+        for headers, progress in (
+            ({"Content-Length": str(len(payload))}, "1.00 MiB / 2.00 MiB (50.0%)"),
+            ({}, "1.00 MiB"),
+        ):
+            with self.subTest(headers=headers), tempfile.TemporaryDirectory() as directory:
+                source = io.BytesIO(payload)
+                source.headers = headers
+                output = io.StringIO()
+                with patch.object(data, "urlopen", return_value=source), \
+                        patch.object(data, "monotonic", side_effect=[0, 5, 6]), \
+                        redirect_stdout(output):
+                    path = data.download("https://example.org/audio.zip", Path(directory) / "audio.zip")
+                self.assertEqual(path.read_bytes(), payload)
+                self.assertIn(f"  audio.zip: {progress}", output.getvalue().splitlines())
+                self.assertIn("Downloaded audio.zip: 2.00 MiB", output.getvalue().splitlines())
 
 
 if __name__ == "__main__":

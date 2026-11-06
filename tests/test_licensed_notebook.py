@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 import types
 import unittest
@@ -10,11 +11,34 @@ from unittest.mock import patch
 
 
 NOTEBOOK = Path(__file__).resolve().parents[1] / "notebooks/basic_training_notebook.ipynb"
+NEGATIVE_FEATURES_CELL = "1pGuJDPyp3ax"
+TRAINING_CONFIG_CELL = "Ii1A14GsGVQT"
 
 
 class LicensedNotebookTests(unittest.TestCase):
+    def setUp(self):
+        self.cells = json.loads(NOTEBOOK.read_text())["cells"]
+
+    def cell_source(self, cell_id):
+        return next("".join(cell["source"]) for cell in self.cells
+                    if cell.get("metadata", {}).get("id") == cell_id)
+
+    def test_install_cell_finds_colab_checkout(self):
+        source = self.cell_source("BFf6511E65ff")
+        source = re.sub(r"(?m)^([ \t]*)[!%].*$", r"\1pass", source)
+
+        with tempfile.TemporaryDirectory() as directory:
+            content = Path(directory)
+            checkout = content / "micro-wake-word"
+            licensed_data = checkout / "microwakeword/audio/licensed_data.py"
+            licensed_data.parent.mkdir(parents=True)
+            licensed_data.touch()
+            namespace = {}
+            with patch.object(Path, "cwd", return_value=content):
+                exec(source, namespace)
+            self.assertEqual(namespace["repo_path"], checkout)
+
     def test_negative_generation_and_training_config_use_new_sources(self):
-        notebook = json.loads(NOTEBOOK.read_text())
         generated = []
         loaded = []
 
@@ -48,8 +72,8 @@ class LicensedNotebookTests(unittest.TestCase):
                 namespace = {"data_root": root, "Clips": Clips,
                              "SpectrogramGeneration": SpectrogramGeneration}
                 with patch.dict("sys.modules", {"mmap_ninja.ragged": ragged, "yaml": yaml}):
-                    exec("".join(notebook["cells"][8]["source"]), namespace)
-                    exec("".join(notebook["cells"][9]["source"]), namespace)
+                    exec(self.cell_source(NEGATIVE_FEATURES_CELL), namespace)
+                    exec(self.cell_source(TRAINING_CONFIG_CELL), namespace)
                 self.assertEqual(len(generated), 10)
                 for corpus in ("speech", "noise"):
                     for split in ("training", "validation", "testing"):
@@ -70,10 +94,10 @@ class LicensedNotebookTests(unittest.TestCase):
                 os.chdir(old_cwd)
 
     def test_changed_python_cells_compile_and_legacy_sources_are_absent(self):
-        notebook = json.loads(NOTEBOOK.read_text())
-        for index in (4, 5, 7, 8, 9):
-            compile("".join(notebook["cells"][index]["source"]), f"cell-{index}", "exec")
-        source = "\n".join("".join(cell["source"]) for cell in notebook["cells"])
+        for cell_id in ("YJRG4Qvo9nXG", "XW3bmbI5-JAz", "D7BHcY1mEGbK",
+                        NEGATIVE_FEATURES_CELL, TRAINING_CONFIG_CELL):
+            compile(self.cell_source(cell_id), f"cell-{cell_id}", "exec")
+        source = "\n".join("".join(cell["source"]) for cell in self.cells)
         for legacy in ("agkphysics/AudioSet", "mchl914/fma_xsmall",
                        "MIT_environmental_impulse_responses", "negative_datasets/",
                        "datasets/kahrendt/microwakeword", "background_paths = ['fma_16k'"):

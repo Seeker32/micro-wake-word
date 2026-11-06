@@ -9,9 +9,10 @@ dependencies, new training, and device evaluation remain pending.
 
 Run `notebooks/basic_training_notebook.ipynb` from this updated checkout. The
 installation cell accepts a working directory at the repository root, inside
-`notebooks`, or above a `microWakeWord` checkout. In Colab, upload this checkout
-or clone a revision containing `microwakeword/audio/licensed_data.py` first.
-Cloning the old upstream notebook alone will not include the new preparation code.
+`notebooks`, or above a `micro-wake-word` or `microWakeWord` checkout. In Colab,
+clone or upload this checkout to `/content/micro-wake-word` before running the
+installation cell. Use `%cd /content/micro-wake-word` to keep generated files
+under the checkout. The checkout must contain `microwakeword/audio/licensed_data.py`.
 
 The data cell calls `prepare_licensed_data("licensed_data_v1")`. It needs the
 system `zip` command (Info-ZIP, including split-archive conversion), approximately
@@ -83,8 +84,8 @@ use a fresh data directory when changing the selection policy or source version.
 The old MIT RIR, FMA, AudioSet, and precomputed NC negative features are no longer
 downloaded or referenced by the notebook. Existing files are not deleted.
 
-Positive features use `licensed_features_v1/positive`. Replacement negative
-features use `licensed_features_v1/negative/{speech,noise,ambient}`. The feature
+Hey Kamana positive features use `licensed_features_v1/positive_hey_kamana`.
+Replacement negative features use `licensed_features_v1/negative/{speech,noise,ambient}`. The feature
 cell resamples through the existing `Clips` loader at 16 kHz, computes features
 at a 10 ms step, and creates classification and ambient evaluation sets using
 the existing `SpectrogramGeneration` and `RaggedMmap` APIs. Short classification
@@ -98,7 +99,7 @@ audio manifest hash and documents the preprocessing and augmentation pools.
 Carry this file, the manifest, notices, and relevant license copies with your
 experiment records and prepare appropriate notices for anything you distribute.
 
-The YAML and output model paths use a separate `licensed_inputs` name, so the
-new configuration does not restore an old experiment's checkpoint. This does
-not retrain anything now or resolve the legacy TTS model's provenance. Do not
+The YAML and output model paths include `hey_kamana` to keep checkpoints
+separate from other wake words. This does not retrain anything now or resolve
+the legacy TTS model's provenance. Do not
 describe a model as fully commercially cleared based on these two steps alone.

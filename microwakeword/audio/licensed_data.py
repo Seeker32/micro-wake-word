@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+from time import monotonic
 from urllib.parse import urlsplit
 from urllib.request import urlopen
 import zipfile
@@ -52,13 +53,28 @@ def download(url, path, md5=None):
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         temporary = path.with_suffix(path.suffix + ".part")
+        mib = 1024 * 1024
         try:
             print(f"Downloading {url}", flush=True)
             with urlopen(url, timeout=60) as source, temporary.open("wb") as target:
-                shutil.copyfileobj(source, target)
+                length = source.headers.get("Content-Length", "").strip()
+                total = int(length) if length.isdecimal() else None
+                downloaded = 0
+                next_update = monotonic() + 5
+                while chunk := source.read(mib):
+                    target.write(chunk)
+                    downloaded += len(chunk)
+                    now = monotonic()
+                    if now >= next_update:
+                        progress = f"{downloaded / mib:.2f} MiB"
+                        if total:
+                            progress += f" / {total / mib:.2f} MiB ({downloaded / total:.1%})"
+                        print(f"  {path.name}: {progress}", flush=True)
+                        next_update = now + 5
             if md5 and digest(temporary, "md5") != md5:
                 raise ValueError(f"Checksum mismatch: {url}")
             temporary.replace(path)
+            print(f"Downloaded {path.name}: {downloaded / mib:.2f} MiB", flush=True)
         finally:
             temporary.unlink(missing_ok=True)
     if md5 and digest(path, "md5") != md5:

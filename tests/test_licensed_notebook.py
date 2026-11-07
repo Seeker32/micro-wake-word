@@ -3,7 +3,6 @@
 import json
 import os
 from pathlib import Path
-import re
 import tempfile
 import types
 import unittest
@@ -24,10 +23,10 @@ class LicensedNotebookTests(unittest.TestCase):
         return next("".join(cell["source"]) for cell in self.cells
                     if cell.get("metadata", {}).get("id") == cell_id)
 
-    def test_install_cell_finds_colab_checkout(self):
-        source = self.cell_source("BFf6511E65ff")
-        source = re.sub(r"(?m)^([ \t]*)[!%].*$", r"\1pass", source)
-
+    def test_path_cell_uses_existing_colab_checkout(self):
+        source = next("".join(c["source"]) for c in self.cells
+                      if "# 路径和唤醒词名称集中设置" in "".join(c["source"]))
+        previous_cwd = Path.cwd()
         with tempfile.TemporaryDirectory() as directory:
             content = Path(directory)
             checkout = content / "micro-wake-word"
@@ -35,9 +34,16 @@ class LicensedNotebookTests(unittest.TestCase):
             licensed_data.parent.mkdir(parents=True)
             licensed_data.touch()
             namespace = {}
-            with patch.object(Path, "cwd", return_value=content):
-                exec(source, namespace)
-            self.assertEqual(namespace["repo_path"], checkout)
+            source = source.replace('Path("/content/micro-wake-word")', f"Path({str(checkout)!r})")
+            try:
+                with patch("subprocess.run") as run:
+                    exec(source, namespace)
+                run.assert_not_called()
+                self.assertEqual(namespace["repo_path"], checkout)
+                self.assertTrue(namespace["use_hey_hi_negatives"])
+                self.assertTrue(namespace["train_dir"].name.endswith("_hey_hi"))
+            finally:
+                os.chdir(previous_cwd)
 
     def test_negative_generation_and_training_config_use_new_sources(self):
         generated = []
@@ -70,7 +76,15 @@ class LicensedNotebookTests(unittest.TestCase):
                 root = Path("licensed_data_v1/prepared")
                 root.mkdir(parents=True)
                 (root / "manifest.json").write_text('{"files": []}')
-                namespace = {}
+                namespace = {
+                    "data_root": root,
+                    "sample_dir": Path("generated_samples/hey_kamana"),
+                    "positive_dir": Path("licensed_features_v1/positive_hey_kamana"),
+                    "features_dir": Path("licensed_features_v1"),
+                    "train_dir": Path("trained_models/hey_kamana_licensed_inputs"),
+                    "config_path": Path("training_parameters_hey_kamana.yaml"),
+                    "use_hey_hi_negatives": False,
+                }
                 modules = {
                     "microwakeword.audio.augmentation": types.SimpleNamespace(
                         Augmentation=lambda **kwargs: kwargs

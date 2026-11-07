@@ -24,7 +24,7 @@ class WslNotebookTests(unittest.TestCase):
     def test_install_bootstraps_pip_in_kernel_environment(self):
         with patch("importlib.util.find_spec", return_value=None), \
                 patch("subprocess.run") as run:
-            namespace = {}
+            namespace = {"repo_path": Path("/fixture/checkout")}
             exec(self.source("BFf6511E65ff"), namespace)
         commands = [call.args[0] for call in run.call_args_list]
         python = namespace["sys"].executable
@@ -59,10 +59,14 @@ class WslNotebookTests(unittest.TestCase):
                         patch("importlib.util.find_spec", return_value=object()), \
                         patch("subprocess.run", side_effect=run):
                     if fail_at is None:
-                        exec(self.source("dEluu7nL7ywd"), {})
+                        exec(self.source("dEluu7nL7ywd"), {
+                            "repo_path": Path(directory), "sample_dir": Path(directory) / "samples",
+                        })
                     else:
                         with self.assertRaises(subprocess.CalledProcessError):
-                            exec(self.source("dEluu7nL7ywd"), {})
+                            exec(self.source("dEluu7nL7ywd"), {
+                                "repo_path": Path(directory), "sample_dir": Path(directory) / "samples",
+                            })
             finally:
                 os.chdir(previous_cwd)
         return audio, commands

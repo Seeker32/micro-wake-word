@@ -13,9 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import audio_metadata
 import datasets
 import math
+import mutagen
 import os
 import random
 import wave
@@ -117,7 +117,7 @@ class Clips:
                     and (duration < self.max_clip_duration_s)
                 ]
             else:
-                # If not a wave file, use the audio_metadata package to analyze audio file headers for the duration.
+                # If not a wave file, use the mutagen package to analyze audio file headers for the duration.
                 # This is slower!
                 filtered_paths = []
 
@@ -125,8 +125,9 @@ class Clips:
                     not math.isinf(self.max_clip_duration_s)
                 ):
                     for audio_file in paths_to_clips:
-                        metadata = audio_metadata.load(audio_file)
-                        duration = metadata["streaminfo"]["duration"]
+                        metadata = mutagen.File(audio_file)
+                        # Unsupported or corrupt files return None and are filtered out.
+                        duration = metadata.info.length if metadata else 0.0
                         if (self.min_clip_duration_s < duration) and (
                             duration < self.max_clip_duration_s
                         ):

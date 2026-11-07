@@ -8,7 +8,7 @@ setuptools.setup(
     version="0.1.0",
     install_requires=[
         "audiomentations>=0.41.0",
-        "audio_metadata",
+        "mutagen",
         "datasets",
         "mmap_ninja",
         "numpy>=2.0",

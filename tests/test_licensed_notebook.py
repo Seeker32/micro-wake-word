@@ -6,11 +6,12 @@ import json
 import os
 from pathlib import Path
 import runpy
-import subprocess
 import tempfile
 import types
 import unittest
 from unittest.mock import patch
+
+from microwakeword.audio.piper_clean100 import prepare_clean100_samples
 
 
 NOTEBOOK = Path(__file__).resolve().parents[1] / "notebooks/basic_training_notebook.ipynb"
@@ -18,6 +19,7 @@ POSITIVE_GENERATION_CELL = "-SvGtCCM9akR"
 AUGMENTATION_CELL = "XW3bmbI5-JAz"
 NEGATIVE_FEATURES_CELL = "1pGuJDPyp3ax"
 TRAINING_CONFIG_CELL = "Ii1A14GsGVQT"
+KAMANA_PHONEMES = "hˈeɪ kˌɑmˈa nə"
 
 
 class LicensedNotebookTests(unittest.TestCase):
@@ -38,6 +40,7 @@ class LicensedNotebookTests(unittest.TestCase):
             licensed_data = checkout / "microwakeword/audio/licensed_data.py"
             licensed_data.parent.mkdir(parents=True)
             licensed_data.touch()
+            licensed_data.with_name("piper_clean100.py").touch()
             namespace = {}
             source = source.replace('Path("/content/micro-wake-word")', f"Path({str(checkout)!r})")
             try:
@@ -45,72 +48,63 @@ class LicensedNotebookTests(unittest.TestCase):
                     exec(source, namespace)
                 run.assert_not_called()
                 self.assertEqual(namespace["repo_path"], checkout)
-                self.assertEqual(namespace["preview_dir"], checkout / "generated_samples/hey_kamana/preview")
-                self.assertEqual(namespace["sample_dir"], checkout / "generated_samples/hey_kamana/three_speeds_v1")
-                self.assertEqual(namespace["positive_dir"].name, "positive_hey_kamana_three_speeds_v1")
+                self.assertEqual(namespace["wake_word_phonemes"], KAMANA_PHONEMES)
+                self.assertEqual(namespace["hey_hi_phonemes"], "hˈeɪ hˈaɪ")
+                self.assertEqual(namespace["preview_dir"], checkout / "generated_samples/hey_kamana/clean100_c_v1_three_speeds_preview")
+                self.assertEqual(namespace["sample_dir"], checkout / "generated_samples/hey_kamana/clean100_c_v1_three_speeds")
+                self.assertEqual(namespace["positive_dir"].name, "positive_hey_kamana_clean100_c_v1_three_speeds")
                 self.assertTrue(namespace["use_hey_hi_negatives"])
-                self.assertTrue(namespace["train_dir"].name.endswith("_hey_hi"))
+                self.assertTrue(namespace["train_dir"].name.endswith("_clean100_c_v1_hey_hi"))
             finally:
                 os.chdir(previous_cwd)
 
+    def fake_voice(self):
+        return types.SimpleNamespace(
+            config=types.SimpleNamespace(
+                speaker_id_map={str(i): i for i in range(245)}, sample_rate=22050,
+                phoneme_id_map=dict.fromkeys(KAMANA_PHONEMES, [1]),
+            ),
+            phonemes_to_ids=list,
+        )
+
     def test_positive_generation_publishes_three_complete_speeds_and_reuses_them(self):
         source = self.cell_source(POSITIVE_GENERATION_CELL)
-        scales = {"fast": "0.65", "normal": "1.0", "slow": "1.25"}
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            sample_dir = root / "three_speeds_v1"
-            preview = root / "preview"
-            preview.mkdir()
-            (preview / "0.wav").touch()
-            namespace = {"repo_path": root, "sample_dir": sample_dir, "Path": Path,
-                         "target_word": "hˈeɪ kɑmˈɑnɑ"}
+            sample_dir = Path(directory) / "clean100_c_v1_three_speeds"
+            voice = self.fake_voice()
+            namespace = {
+                "sample_dir": sample_dir, "clean100_voice": voice,
+                "wake_word_phonemes": KAMANA_PHONEMES,
+                "prepare_clean100_samples": prepare_clean100_samples,
+            }
 
-            def fake_piper(command, *, cwd, check):
-                output = Path(command[command.index("--output-dir") + 1])
-                self.assertEqual(cwd, root / "piper-sample-generator")
-                self.assertTrue(check)
-                self.assertEqual(command[2:5], ["piper_sample_generator", namespace["target_word"], "--phoneme-input"])
-                self.assertEqual(command[command.index("--length-scales") + 1], scales[output.name])
-                self.assertEqual(command[command.index("--max-samples") + 1], "1000")
-                self.assertEqual(command[command.index("--batch-size") + 1], "100")
+            def fake_pcm(voice, phonemes, speaker, scale, noise):
                 self.assertFalse(sample_dir.exists())
-                output.mkdir(parents=True)
-                for i in range(1000):
-                    (output / f"{i}.wav").touch()
+                return f"{speaker:04}{scale:.2f}{noise:.2f}".encode()
 
-            with patch("subprocess.run", side_effect=fake_piper) as run, redirect_stdout(io.StringIO()) as log:
+            with patch("microwakeword.audio.piper_clean100._synthesize_pcm", side_effect=fake_pcm) as synth, \
+                    redirect_stdout(io.StringIO()) as log:
                 exec(source, namespace)
                 exec(source, namespace)
-                self.assertEqual(run.call_count, 3)
-                self.assertEqual({path.parent.name for path in sample_dir.glob("*/*.wav")}, set(scales))
-                self.assertEqual(len(list(sample_dir.glob("*/*.wav"))), 3000)
-                self.assertTrue((preview / "0.wav").is_file())
+                self.assertEqual(synth.call_count, 3000)
+                for speed in ("fast", "normal", "slow"):
+                    self.assertEqual(len(list((sample_dir / speed).glob("*.wav"))), 1000)
+                self.assertEqual(len({call.args[2] for call in synth.call_args_list}), 245)
                 self.assertIn("共 3000 条", log.getvalue())
-                with self.assertRaisesRegex(FileExistsError, "positive_dataset_name"):
-                    exec(source, {**namespace, "target_word": "different"})
+                marker = json.loads((sample_dir / "generation.json").read_text())
+                self.assertEqual(marker["phonemes"], "hˈeɪ kˌɑmˈa nə")
                 (sample_dir / "fast/0.wav").unlink()
-                with self.assertRaisesRegex(FileExistsError, "positive_dataset_name"):
+                with self.assertRaises(FileExistsError):
                     exec(source, namespace)
-                self.assertEqual(run.call_count, 3)
+                self.assertEqual(synth.call_count, 3000)
 
     def test_positive_generation_failure_leaves_no_published_or_staged_data(self):
-        source = self.cell_source(POSITIVE_GENERATION_CELL)
-        for failure in (subprocess.CalledProcessError, RuntimeError):
-            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                sample_dir = root / "three_speeds_v1"
-
-                def fake_piper(command, **kwargs):
-                    output = Path(command[command.index("--output-dir") + 1])
-                    output.mkdir(parents=True)
-                    (output / "0.wav").touch()
-                    if failure is subprocess.CalledProcessError and output.name == "slow":
-                        raise subprocess.CalledProcessError(1, command)
-
-                with patch("subprocess.run", side_effect=fake_piper) as run, self.assertRaises(failure):
-                    exec(source, {"repo_path": root, "sample_dir": sample_dir, "Path": Path, "target_word": "hey"})
-                self.assertEqual(run.call_count, 3)
-                self.assertEqual(list(root.iterdir()), [])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("microwakeword.audio.piper_clean100._synthesize_pcm", return_value=b"same"):
+                with self.assertRaisesRegex(RuntimeError, "不重复"):
+                    prepare_clean100_samples(self.fake_voice(), root / "samples", KAMANA_PHONEMES)
+            self.assertEqual(list(root.iterdir()), [])
 
     def test_ambient_filter_keeps_untagged_flac_with_valid_duration(self):
         class UntaggedFlac(dict):
@@ -171,8 +165,8 @@ class LicensedNotebookTests(unittest.TestCase):
                 (root / "manifest.json").write_text('{"files": []}')
                 namespace = {
                     "data_root": root,
-                    "sample_dir": Path("generated_samples/hey_kamana/three_speeds_v1"),
-                    "positive_dir": Path("licensed_features_v1/positive_hey_kamana_three_speeds_v1"),
+                    "sample_dir": Path("generated_samples/hey_kamana/clean100_c_v1_three_speeds"),
+                    "positive_dir": Path("licensed_features_v1/positive_hey_kamana_clean100_c_v1_three_speeds"),
                     "features_dir": Path("licensed_features_v1"),
                     "train_dir": Path("trained_models/hey_kamana_licensed_inputs"),
                     "config_path": Path("training_parameters_hey_kamana.yaml"),

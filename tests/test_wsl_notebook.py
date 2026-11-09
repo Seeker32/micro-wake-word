@@ -1,7 +1,6 @@
 """Check WSL dependency and synthesis failure handling without installing ML packages."""
 
 import json
-import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -32,61 +31,55 @@ class WslNotebookTests(unittest.TestCase):
         self.assertEqual(commands[-1][:5], [python, "-m", "pip", "install", "-e"])
         self.assertTrue(all(call.kwargs["check"] for call in run.call_args_list))
 
-    def run_sample(self, fail_at=None):
+    def run_sample(self, *, fail_install=False, fail_synthesis=False):
         audio = Mock()
-        commands = []
         display = types.ModuleType("IPython.display")
         display.Audio = audio
+        synthesize = Mock(side_effect=ValueError("failed synthesis") if fail_synthesis else None)
+        load = Mock(return_value=object())
 
-        def run(command, **kwargs):
-            commands.append(command)
-            self.assertTrue(kwargs["check"])
-            if fail_at is not None and fail_at in command:
-                raise subprocess.CalledProcessError(1, command)
-            if "piper_sample_generator" in command:
-                output = Path(command[command.index("--output-dir") + 1])
-                output.mkdir(parents=True)
-                (output / "0.wav").touch()
-
-        previous_cwd = Path.cwd()
         with tempfile.TemporaryDirectory() as directory:
-            try:
-                os.chdir(directory)
-                model = Path("piper-sample-generator/models/en_US-libritts_r-medium.pt")
-                model.parent.mkdir(parents=True)
-                model.touch()
-                with patch.dict("sys.modules", {"IPython.display": display}), \
-                        patch("importlib.util.find_spec", return_value=object()), \
-                        patch("subprocess.run", side_effect=run):
-                    if fail_at is None:
-                        exec(self.source("dEluu7nL7ywd"), {
-                            "repo_path": Path(directory), "sample_dir": Path(directory) / "samples",
-                        })
-                    else:
-                        with self.assertRaises(subprocess.CalledProcessError):
-                            exec(self.source("dEluu7nL7ywd"), {
-                                "repo_path": Path(directory), "sample_dir": Path(directory) / "samples",
-                            })
-            finally:
-                os.chdir(previous_cwd)
-        return audio, commands
+            root = Path(directory)
+            namespace = {
+                "clean100_model_dir": root / "model",
+                "preview_dir": root / "preview",
+                "wake_word_phonemes": "hˈeɪ tˈɛst",
+            }
+            with patch.dict("sys.modules", {"IPython.display": display}), \
+                    patch("importlib.util.find_spec", return_value=object()), \
+                    patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "pip") if fail_install else None) as run, \
+                    patch("microwakeword.audio.piper_clean100.load_clean100", load), \
+                    patch("microwakeword.audio.piper_clean100.write_clean100_preview", synthesize):
+                source = self.source("dEluu7nL7ywd")
+                if fail_install or fail_synthesis:
+                    error = subprocess.CalledProcessError if fail_install else ValueError
+                    with self.assertRaises(error):
+                        exec(source, namespace)
+                else:
+                    exec(source, namespace)
+
+            run.assert_called_once_with(
+                [namespace["sys"].executable, "-m", "pip", "install", "piper-tts==1.3.0"],
+                check=True,
+            )
+            return audio, load, synthesize, root
 
     def test_dependency_failure_stops_before_synthesis_and_playback(self):
-        audio, commands = self.run_sample(fail_at="pip")
+        audio, load, synthesize, _ = self.run_sample(fail_install=True)
+        load.assert_not_called()
+        synthesize.assert_not_called()
         audio.assert_not_called()
-        self.assertEqual(len(commands), 1)
 
     def test_synthesis_failure_stops_before_playback(self):
-        audio, commands = self.run_sample(fail_at="piper_sample_generator")
+        audio, _, synthesize, _ = self.run_sample(fail_synthesis=True)
+        synthesize.assert_called_once()
         audio.assert_not_called()
-        self.assertEqual(len(commands), 3)
 
-    def test_success_plays_explicit_filename_and_reuses_existing_model(self):
-        audio, commands = self.run_sample()
-        audio.assert_called_once()
-        self.assertTrue(Path(audio.call_args.kwargs["filename"]).is_absolute())
-        self.assertTrue(audio.call_args.kwargs["autoplay"])
-        self.assertEqual(len(commands), 3)
+    def test_success_plays_the_clean100_preview(self):
+        audio, load, synthesize, root = self.run_sample()
+        load.assert_called_once_with(root / "model")
+        synthesize.assert_called_once_with(load.return_value, root / "preview/0.wav", "hˈeɪ tˈɛst")
+        audio.assert_called_once_with(filename=str(root / "preview/0.wav"), autoplay=True)
 
 
 if __name__ == "__main__":

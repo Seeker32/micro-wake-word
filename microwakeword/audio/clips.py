@@ -126,8 +126,8 @@ class Clips:
                 ):
                     for audio_file in paths_to_clips:
                         metadata = mutagen.File(audio_file)
-                        # Unsupported or corrupt files return None and are filtered out.
-                        duration = metadata.info.length if metadata else 0.0
+                        # Valid audio can have stream info without any tags.
+                        duration = metadata.info.length if metadata is not None else 0.0
                         if (self.min_clip_duration_s < duration) and (
                             duration < self.max_clip_duration_s
                         ):

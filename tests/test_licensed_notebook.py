@@ -50,11 +50,10 @@ class LicensedNotebookTests(unittest.TestCase):
                 self.assertEqual(namespace["repo_path"], checkout)
                 self.assertEqual(namespace["wake_word_phonemes"], KAMANA_PHONEMES)
                 self.assertEqual(namespace["hey_hi_phonemes"], "hˈeɪ hˈaɪ")
-                self.assertEqual(namespace["preview_dir"], checkout / "generated_samples/hey_kamana/clean100_c_v1_three_speeds_preview")
-                self.assertEqual(namespace["sample_dir"], checkout / "generated_samples/hey_kamana/clean100_c_v1_three_speeds")
-                self.assertEqual(namespace["positive_dir"].name, "positive_hey_kamana_clean100_c_v1_three_speeds")
-                self.assertTrue(namespace["use_hey_hi_negatives"])
-                self.assertTrue(namespace["train_dir"].name.endswith("_clean100_c_v1_hey_hi"))
+                self.assertEqual(namespace["preview_dir"], checkout / "generated_samples/hey_kamana/clean100_v1_three_speeds_preview")
+                self.assertEqual(namespace["sample_dir"], checkout / "generated_samples/hey_kamana/clean100_v1_three_speeds")
+                self.assertEqual(namespace["positive_dir"].name, "positive_hey_kamana_clean100_v1_three_speeds")
+                self.assertTrue(namespace["train_dir"].name.endswith("_clean100_v1_hey_hi"))
             finally:
                 os.chdir(previous_cwd)
 
@@ -70,7 +69,7 @@ class LicensedNotebookTests(unittest.TestCase):
     def test_positive_generation_publishes_three_complete_speeds_and_reuses_them(self):
         source = self.cell_source(POSITIVE_GENERATION_CELL)
         with tempfile.TemporaryDirectory() as directory:
-            sample_dir = Path(directory) / "clean100_c_v1_three_speeds"
+            sample_dir = Path(directory) / "clean100_v1_three_speeds"
             voice = self.fake_voice()
             namespace = {
                 "sample_dir": sample_dir, "clean100_voice": voice,
@@ -160,17 +159,19 @@ class LicensedNotebookTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             try:
                 os.chdir(directory)
-                root = Path("licensed_data_v1/prepared")
+                root = Path("data_v1/prepared")
                 root.mkdir(parents=True)
                 (root / "manifest.json").write_text('{"files": []}')
                 namespace = {
                     "data_root": root,
-                    "sample_dir": Path("generated_samples/hey_kamana/clean100_c_v1_three_speeds"),
-                    "positive_dir": Path("licensed_features_v1/positive_hey_kamana_clean100_c_v1_three_speeds"),
-                    "features_dir": Path("licensed_features_v1"),
+                    "sample_dir": Path("generated_samples/hey_kamana/clean100_v1_three_speeds"),
+                    "positive_dir": Path("features_v1/positive_hey_kamana_clean100_v1_three_speeds"),
+                    "features_dir": Path("features_v1"),
                     "train_dir": Path("trained_models/hey_kamana_licensed_inputs"),
                     "config_path": Path("training_parameters_hey_kamana.yaml"),
-                    "use_hey_hi_negatives": False,
+                    "hey_hi_features_dir": Path("features_v1/negative/hey_hi_clean100_v1"),
+                    "hey_hi_lineage": {"counts": {"training": 1}, "audio_manifest": "generated_datasets/hey_hi_negative_clean100_v1/raw/manifest.json"},
+                    "hey_hi_context_frames": 204,
                 }
                 modules = {
                     "microwakeword.audio.augmentation": types.SimpleNamespace(
@@ -196,20 +197,21 @@ class LicensedNotebookTests(unittest.TestCase):
                 self.assertEqual(len(generated), 10)
                 for corpus in ("speech", "noise"):
                     for split in ("training", "validation", "testing"):
-                        self.assertIn(f"licensed_features_v1/negative/{corpus}/{split}/negative_mmap", generated)
+                        self.assertIn(f"features_v1/negative/{corpus}/{split}/negative_mmap", generated)
                 ambient = [row for row in loaded if "min_clip_duration_s" in row]
                 self.assertEqual(len(ambient), 4)
                 self.assertTrue(all("repeat_clip_min_duration_s" not in row for row in ambient))
                 config = namespace["config"]
                 self.assertEqual(config["features"][0]["features_dir"], str(namespace["positive_dir"]))
-                self.assertTrue(all(row["features_dir"].startswith("licensed_features_v1/")
+                self.assertTrue(all(row["features_dir"].startswith("features_v1/")
                                     for row in config["features"]))
                 self.assertEqual(sum(row["truth"] for row in config["features"]), 1)
                 self.assertNotEqual(config["train_dir"], "trained_models/wakeword")
-                lineage = json.loads(Path("licensed_features_v1/feature_sources.json").read_text())
+                lineage = json.loads(Path("features_v1/feature_sources.json").read_text())
                 self.assertEqual(lineage["positive_augmentation"]["testing"]["background_pool"],
-                                 "licensed_data_v1/prepared/noise/testing")
+                                 "data_v1/prepared/noise/testing")
                 self.assertTrue(lineage["pending"])
+                self.assertEqual(lineage["hard_negatives"], {"hey_hi": namespace["hey_hi_lineage"]})
             finally:
                 os.chdir(old_cwd)
 
@@ -220,7 +222,8 @@ class LicensedNotebookTests(unittest.TestCase):
         source = "\n".join("".join(cell["source"]) for cell in self.cells)
         for legacy in ("agkphysics/AudioSet", "mchl914/fma_xsmall",
                        "MIT_environmental_impulse_responses", "negative_datasets/",
-                       "datasets/kahrendt/microwakeword", "background_paths = ['fma_16k'"):
+                       "datasets/kahrendt/microwakeword", "background_paths = ['fma_16k'",
+                       "use_hey_hi_negatives"):
             self.assertNotIn(legacy, source)
         self.assertIn("augmenter=augmenters[split]", source)
 

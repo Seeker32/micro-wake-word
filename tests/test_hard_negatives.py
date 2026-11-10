@@ -85,7 +85,6 @@ class HardNegativeTests(unittest.TestCase):
                 root = Path(directory)
                 make_audio(root / "raw")
                 namespace = {
-                    "use_hey_hi_negatives": True,
                     "hey_hi_audio_dir": root / "raw",
                     "hey_hi_audio_zip": root / "absent.zip",
                     "hey_hi_features_dir": root / "features/negative/hey_hi",

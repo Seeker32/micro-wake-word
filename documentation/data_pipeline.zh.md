@@ -12,7 +12,7 @@ generated_samples/hey_kamana/*.wav          1000 条正样本音频
    │
    │  cell 5     download + license filter + hash
    ▼
-licensed_data_v1/prepared/                  FSD50K 噪声 / LibriSpeech 语音 / SLR28 RIR
+data_v1/prepared/                     FSD50K 噪声 / LibriSpeech 语音 / SLR28 RIR
    │          ├── noise/{training,validation,testing}/
    │          ├── speech/{training,validation,testing}/
    │          ├── rirs/
@@ -21,9 +21,9 @@ licensed_data_v1/prepared/                  FSD50K 噪声 / LibriSpeech 语音 /
    │  cell 7     每个 split 一个增广器（背景池 = 同 split 的 noise/）
    │  cell 8     单条试听
    ▼
-   ├─ cell 9   正样本 → licensed_features_v1/positive_hey_kamana/{split}/wakeword_mmap
-   └─ cell 10  负样本 → licensed_features_v1/negative/{speech,noise}/{split}/negative_mmap
-                ambient  → licensed_features_v1/negative/ambient/{validation,testing}_ambient/
+   ├─ cell 9   正样本 → features_v1/positive_hey_kamana/{split}/wakeword_mmap
+   └─ cell 10  负样本 → features_v1/negative/{speech,noise}/{split}/negative_mmap
+                ambient  → features_v1/negative/ambient/{validation,testing}_ambient/
    │
    │  cell 11    yaml：sampling_weight / penalty_weight / truncation_strategy
    ▼
@@ -38,7 +38,7 @@ licensed_data_v1/prepared/                  FSD50K 噪声 / LibriSpeech 语音 /
 
 ## 2. 负样本与增广音频：下载 + 许可过滤
 
-cell 5 调 `prepare_licensed_data("licensed_data_v1")`（`microwakeword/audio/licensed_data.py`），约 15 GB 下载、40 GB 磁盘。
+cell 5 调 `prepare_licensed_data("data_v1")`（`microwakeword/audio/licensed_data.py`），约 15 GB 下载、40 GB 磁盘。
 
 | 输入 | 用途 | 过滤规则 | 落盘 |
 |---|---|---|---|
@@ -186,6 +186,6 @@ training/  validation/  testing/  validation_ambient/  testing_ambient/
 2. **验证/测试不重切**：LibriSpeech 与 FSD50K 的 split 完全由上游/哈希决定，notebook 没有“再随机抽 10% 做验证”这一步，所以调参空间受限。
 3. **两次 shuffle 无固定种子**（`data.py:205`、`596`，以及 `clips.py:150` 的第二次对半）：成员集合固定，但顺序/边界可变，因此两次训练之间的验证指标不会逐位复现。
 4. **正负样本评估方式不对称**：正样本 validation/testing 用 `slide_frames` 模拟流式，负样本不使用；ambient 用长录音切片。三者指标不能直接横向比较。
-5. **特征落盘没有版本号**：换增广参数后必须手动删掉 `licensed_features_v1/` 再重建，否则 `RaggedMmap` 会读到旧特征；`feature_sources.json` 只记录音频清单哈希，不记录增广参数哈希。
+5. **特征落盘没有版本号**：换增广参数后必须手动删掉 `features_v1/` 再重建，否则 `RaggedMmap` 会读到旧特征；`feature_sources.json` 只记录音频清单哈希，不记录增广参数哈希。
 6. **`manifest.csv` 里没有时长字段**：条数比例 ≠ 时长比例 ≠ 频谱帧数比例（负样本 5 s 定长切片后，帧数比例才接近条数比例）。
 7. cell 14 用 tar 打包 `trained_models/`、yaml、`feature_sources.json`、manifest/attribution 等，作为实验记录归档；不含音频本体。

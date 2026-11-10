@@ -2,13 +2,13 @@
 
 本文描述 `notebooks/basic_training_notebook.ipynb` 跑完后**真正喂给训练的那份数据集**由哪些部分组成：来源、数量、划分方式，以及训练/验证时各自的取用方式。数据处理过程（怎么从原始音频走到特征）见 [data_pipeline.zh.md](data_pipeline.zh.md)，许可与合规见 [licensed_training_data.md](licensed_training_data.md)。
 
-默认配置为 `wake_word_name="hey_kamana"`、`positive_dataset_name="three_speeds_v1"`、`use_hey_hi_negatives=True`（cell 1）。若设 `use_hey_hi_negatives=False`，则下文"hey hi 困难负样本"一组消失，配置文件与输出目录去掉 `_hey_hi` 后缀，其余不变。
+默认配置为 `wake_word_name="hey_kamana"`、`positive_dataset_name="three_speeds_v1"`（cell 1）。hey hi 困难负样本是必需项：生成、特征、训练配置、评估和归档各环节都无条件包含它，配置文件与输出目录固定带 `_hey_hi` 后缀。
 
 ## 1. 总览
 
 训练读取 `training_parameters_hey_kamana_hey_hi.yaml`（cell 14）里 `features` 列表列出的 **5 组特征**。所有特征都是 10 ms 步长的频谱（RaggedMmap）；训练窗口统一为 **204 帧 ≈ 2.04 s**（`clip_duration_ms=1500` 加上 mixednet 结构丢弃的 154 帧，cell 14 末尾有一致性断言）。
 
-| # | features_dir（`licensed_features_v1/` 下） | truth | sampling_weight | penalty_weight | truncation_strategy | 作用 |
+| # | features_dir（`features_v1/` 下） | truth | sampling_weight | penalty_weight | truncation_strategy | 作用 |
 |---|---|---|---|---|---|---|
 | 1 | `positive_hey_kamana_three_speeds_v1` | True | 2.0 | 1.0 | `truncate_start` | 正样本 |
 | 2 | `negative/speech` | False | 10.0 | 1.0 | `random` | 语音负样本 |
@@ -19,7 +19,7 @@
 ## 2. 特征落盘结构
 
 ```
-licensed_features_v1/
+features_v1/
 ├── positive_hey_kamana_three_speeds_v1/
 │   ├── training/wakeword_mmap
 │   ├── validation/wakeword_mmap
@@ -31,10 +31,10 @@ licensed_features_v1/
 │   └── ambient/
 │       ├── validation_ambient/{speech,noise}_mmap
 │       └── testing_ambient/{speech,noise}_mmap
-└── feature_sources.json        # 记录与 licensed_data_v1/prepared/manifest.json 的哈希关联
+└── feature_sources.json        # 记录与 data_v1/prepared/manifest.json 的哈希关联
 ```
 
-特征的上游原始音频在 `licensed_data_v1/prepared/`（`noise/`、`speech/`、`rirs/` 加 `manifest.csv`、`manifest.json`、`ATTRIBUTION.md`、`excluded_fsd.csv`、`sources/`），由 cell 7 的 `prepare_licensed_data("licensed_data_v1")` 生成。
+特征的上游原始音频在 `data_v1/prepared/`（`noise/`、`speech/`、`rirs/` 加 `manifest.csv`、`manifest.json`、`ATTRIBUTION.md`、`excluded_fsd.csv`、`sources/`），由 cell 7 的 `prepare_licensed_data("data_v1")` 生成。
 
 ## 3. 各组数据的组成
 
@@ -92,7 +92,7 @@ licensed_features_v1/
 
 注意三点：
 
-1. speech/noise 的条数是 `train-result/hey_kamana_v1/licensed_data_v1/prepared/manifest.csv`（102,265 行）的**实测值**，许可过滤或上游版本变化会小幅改变数字；正样本与 hey hi 的条数由生成参数固定。
+1. speech/noise 的条数是 `train-result/hey_kamana_v1/data_v1/prepared/manifest.csv`（102,265 行）的**实测值**，许可过滤或上游版本变化会小幅改变数字；正样本与 hey hi 的条数由生成参数固定。
 2. 负样本的"特征条数"（5 s 块）多于文件数，上表按文件计。
 3. 正样本 8:1:1、LibriSpeech 84:8:8、FSD50K 约 83:7.5:9.5、hey hi 80:10:10——**各组划分比例并不一致**，也不存在一个全局的 train/val/test 比例。
 

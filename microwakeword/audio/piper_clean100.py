@@ -22,11 +22,27 @@ MODEL_HASHES = {
     "clean100.onnx": "a48b44084f5465a9d1c5e74c46c6ce6e1907af85e34f15292b9f44b13263f6e4",
     "clean100.onnx.json": "575a90e0f03154d30c4e8d9b1a86dcb590f7df2fc65e24466dde3c91491984b8",
 }
+GPU_PROVIDERS = (
+    "TensorrtExecutionProvider",
+    "CUDAExecutionProvider",
+    "CoreMLExecutionProvider",
+    "DmlExecutionProvider",
+)
+
+
+def _session_providers():
+    """按优先级列出可用的 GPU provider，CPU 始终作为兜底。"""
+    import onnxruntime
+
+    available = set(onnxruntime.get_available_providers())
+    gpu = [name for name in GPU_PROVIDERS if name in available]
+    return gpu + ["CPUExecutionProvider"]
 
 
 def load_clean100(model_dir):
-    """Load the hash-verified author release on CPU."""
-    from piper import PiperVoice
+    """Load the hash-verified author release, preferring GPU and falling back to CPU."""
+    import onnxruntime
+    from piper import PiperConfig, PiperVoice
 
     model_dir = Path(model_dir)
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -41,7 +57,17 @@ def load_clean100(model_dir):
                 if digest(candidate) != expected_hash:
                     raise ValueError(f"{filename} 下载后的 SHA-256 不匹配。")
                 candidate.replace(path)
-    return PiperVoice.load(model_dir / "clean100.onnx")
+
+    model_path = model_dir / "clean100.onnx"
+    with open(f"{model_path}.json", "r", encoding="utf-8") as config_file:
+        config = PiperConfig.from_dict(json.load(config_file))
+    session = onnxruntime.InferenceSession(
+        str(model_path),
+        sess_options=onnxruntime.SessionOptions(),
+        providers=_session_providers(),
+    )
+    print(f"Clean 100 · 推理设备：{session.get_providers()[0]}", flush=True)
+    return PiperVoice(config=config, session=session)
 
 
 def _phoneme_ids(voice, ipa):

@@ -3,6 +3,7 @@
 from collections import Counter
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
 from random import Random
 from tempfile import TemporaryDirectory
@@ -25,17 +26,27 @@ MODEL_HASHES = {
 GPU_PROVIDERS = (
     "TensorrtExecutionProvider",
     "CUDAExecutionProvider",
-    "CoreMLExecutionProvider",
     "DmlExecutionProvider",
 )
+# CoreML EP 对本模型不稳定（长音素序列在重复推理时段错误，onnxruntime 1.31 实测），
+# 默认不启用；设 PIPER_DEVICE=coreml 可强制开启。
+OPT_IN_GPU_PROVIDERS = ("CoreMLExecutionProvider",)
 
 
 def _session_providers():
-    """按优先级列出可用的 GPU provider，CPU 始终作为兜底。"""
+    """按优先级列出可用的 GPU provider，CPU 始终作为兜底。
+
+    PIPER_DEVICE=cpu 强制纯 CPU；PIPER_DEVICE=coreml 额外启用 CoreML。
+    """
     import onnxruntime
 
+    requested = os.environ.get("PIPER_DEVICE", "auto").lower()
+    if requested == "cpu":
+        return ["CPUExecutionProvider"]
     available = set(onnxruntime.get_available_providers())
     gpu = [name for name in GPU_PROVIDERS if name in available]
+    if requested == "coreml":
+        gpu += [name for name in OPT_IN_GPU_PROVIDERS if name in available]
     return gpu + ["CPUExecutionProvider"]
 
 

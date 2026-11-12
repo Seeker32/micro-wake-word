@@ -668,99 +668,43 @@ def ensure_chime6(output_dir=FOLDER, source=None, *, source_dirs=()):
 AMBIENT_SPLITS = ("validation", "testing")  # local split -> <split>_ambient features
 
 
-def _read_clip(path):
-    """Return 16 kHz mono PCM16 samples as float32, rejecting anything else."""
-    import numpy as np
-
-    with wave.open(str(path), "rb") as wav:
-        params = (wav.getnchannels(), wav.getsampwidth(), wav.getframerate())
-        frames = wav.getnframes()
-        pcm = wav.readframes(frames)
-    if params != (1, 2, SAMPLE_RATE) or len(pcm) != frames * 2:
-        raise ValueError(f"{path}: expected complete mono 16-bit 16 kHz, got {params}")
-    return np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
-
-
 def prepare_ambient_features(prepared, features_dir, *, step_ms=10, splits=AMBIENT_SPLITS):
     """Write `<features_dir>/<split>_ambient/chime6_mmap` tracks for evaluation.
 
     Tracks stay whole (no repetition, no 5 s chunking), so the training code counts
-    false accepts per hour of real room audio. The manifest is re-verified first and
-    the resulting clips are indexed in `feature_sources.json` for attribution.
-    `splits` limits the build, e.g. to ("testing",) when `validation_ambient` would
-    not fit in the training machine's memory.
+    false accepts per hour of real room audio. The build is delegated to
+    `microwakeword.audio.ambient_features`, which sorts clips, records a SHA-256 per
+    track and reuses a verified set instead of regenerating it. `splits` limits the
+    build, e.g. to ("testing",) when `validation_ambient` would not fit in the
+    training machine's memory.
     """
+    from microwakeword.audio.ambient_features import build_ambient_set
+
     splits = tuple(splits)
     if not splits or set(splits) - set(AMBIENT_SPLITS):
         raise ValueError(f"splits must be a subset of {AMBIENT_SPLITS}, got {splits!r}")
-    import numpy as np
-    from mmap_ninja.ragged import RaggedMmap
-    from microwakeword.audio.audio_utils import generate_features_for_clip
-
     prepared, features_dir = verify_prepared(Path(prepared)), Path(features_dir)
-    clips = sorted((row for row in json.loads((prepared / "manifest.json").read_text())["files"]
-                    if row["path"].startswith("audio/")), key=lambda row: row["path"])
-    if not clips:
-        raise ValueError(f"No audio in {prepared}")
-    signature = {"prepared_manifest_sha256": digest(prepared / "manifest.json"),
-                 "step_ms": step_ms, "window_ms": 30, "splits": list(splits),
-                 "clips": [row["path"] for row in clips]}
-    lineage_path = features_dir / "feature_sources.json"
-    if lineage_path.is_file():
-        saved = json.loads(lineage_path.read_text())
-        counts = Counter(row["split"] for row in clips)
-        if saved.get("signature") == signature and all(
-                len(RaggedMmap(features_dir / f"{split}_ambient" / "chime6_mmap")) == counts[split]
-                for split in splits):
-            print(f"Reusing CHiME-6 ambient features in {features_dir}", flush=True)
-            return saved
-
-    frames = {}
-
-    def tracks(indices):
-        for index in indices:
-            row = clips[index]
-            feature = generate_features_for_clip(_read_clip(prepared / row["path"]), step_ms=step_ms)
-            if feature.ndim != 2 or feature.shape[1] != 40 or not len(feature):
-                raise ValueError(f"Invalid CHiME-6 features for {row['path']}: {feature.shape}")
-            frames[row["path"]] = int(feature.shape[0])
-            yield feature.astype(np.float32)
-
-    features_dir.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="ambient-", dir=features_dir.parent) as staging:
-        staged = Path(staging) / "features"
-        for split in splits:
-            indices = [i for i, row in enumerate(clips) if row["split"] == split]
-            if not indices:
-                raise ValueError(f"No {split} audio for ambient evaluation in {prepared}")
-            output = staged / f"{split}_ambient" / "chime6_mmap"
-            output.parent.mkdir(parents=True)
-            RaggedMmap.from_generator(str(output), tracks(indices), batch_size=1, verbose=False)
-        hours = Counter()
-        for row in clips:
-            hours[row["split"]] += row["duration_s"] / 3600
-        lineage = {
-            "dataset": "CHiME-6 (OpenSLR SLR150), real far-field home recordings",
-            "prepared": str(prepared.resolve()),
-            "prepared_manifest": str((prepared / "manifest.json").resolve()),
-            "signature": signature,
-            "processing": f"{step_ms} ms step, 30 ms window, 40 mel bins; whole clips, "
-                          "no repetition and no chunking; ambient evaluation only",
-            "hours": {split: hours[split] for split in splits},
-            "clips": [{key: row[key] for key in ("path", "split", "session", "room", "array",
-                                                 "channel", "duration_s", "start_s", "sha256")}
-                      | {"feature_frames": frames.get(row["path"])} for row in clips
-                      if row["split"] in splits],
-            "license_url": LICENSE_URL,
-            "attribution": str((prepared / "ATTRIBUTION.md").resolve()),
-        }
-        (staged / "feature_sources.json").write_text(
-            json.dumps(lineage, indent=2) + "\n", encoding="utf-8")
-        if features_dir.exists():
-            print(f"Replacing stale features in {features_dir}", flush=True)
-            shutil.rmtree(features_dir)  # derived, and the signature no longer matches
-        staged.rename(features_dir)
-    return lineage
+    manifest = build_ambient_set(prepared, features_dir, corpora=("chime6",),
+                                 splits=[(split, f"{split}_ambient") for split in splits],
+                                 step_ms=step_ms)
+    hours = Counter()
+    for clip in manifest["clips"]:
+        hours[clip["split"]] += clip["duration_s"] / 3600
+    return {
+        "dataset": "CHiME-6 (OpenSLR SLR150), real far-field home recordings",
+        "prepared": str(prepared.resolve()),
+        "prepared_manifest": str((prepared / "manifest.json").resolve()),
+        "prepared_manifest_sha256": manifest["prepared"]["manifest_sha256"],
+        "signature": {"prepared_manifest_sha256": manifest["prepared"]["manifest_sha256"],
+                      "step_ms": step_ms, "window_ms": 30,
+                      "splits": list(splits),
+                      "clips": [clip["path"] for clip in manifest["clips"]]},
+        "processing": manifest["processing"],
+        "hours": {split: hours[split] for split in splits},
+        "clips": manifest["clips"],
+        "license_url": LICENSE_URL,
+        "attribution": str((prepared / "ATTRIBUTION.md").resolve()),
+    }
 
 
 def evaluate_ambient_model(model_path, features_dir, *, split="testing", cutoffs=None,

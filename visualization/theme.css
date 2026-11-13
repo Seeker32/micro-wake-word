@@ -1,0 +1,109 @@
+/* microWakeWord 可视化 · 共享主题令牌
+ * 暗色为默认，html[data-theme="light"] 覆盖为明亮模式。
+ * 由 index.html 与 3d.html 共同引用。 */
+  :root {
+    --bg: #0a0d11;
+    --panel: #111823;
+    --panel-2: #0c1219;
+    --line: #1e2a38;
+    --line-2: #2b3a4c;
+    --ink: #e8eef6;
+    --ink-2: #b6c3d2;
+    --muted: #7d8ea3;
+    --amber: #f5b13d;
+    --teal: #37d6c9;
+    --violet: #a78bfa;
+    --green: #5ddc9a;
+    --red: #ff6b6b;
+    --blue: #6ea8fe;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --radius: 12px;
+
+    --bg-grad-a: #16212d;
+    --bg-grad-b: #151a2a;
+    --grid: rgba(255, 255, 255, .035);
+    --topbar-bg: rgba(10, 13, 17, .84);
+    --surface-1: rgba(255, 255, 255, .022);
+    --surface-2: rgba(255, 255, 255, .028);
+    --surface-3: rgba(255, 255, 255, .035);
+    --input-bg: #0a1017;
+    --branch-bg: #0b1219;
+    --inspector-bg: #0d141d;
+    --code-bg: #080d13;
+    --code-ink: #cbd7e6;
+    --shadow-drawer: -24px 0 48px rgba(0, 0, 0, .45);
+    --shadow-node: 0 8px 24px rgba(0, 0, 0, .35);
+    --amber-faint: rgba(245, 177, 61, .06);
+    --amber-soft: rgba(245, 177, 61, .08);
+    --amber-strong-bg: rgba(245, 177, 61, .22);
+    --amber-line: rgba(245, 177, 61, .3);
+    --teal-faint: rgba(55, 214, 201, .07);
+    --teal-soft: rgba(55, 214, 201, .14);
+    --teal-line: rgba(55, 214, 201, .35);
+    --buf: #ff9f68;
+    --buf-line: rgba(255, 159, 104, .45);
+    --buf-stripe: rgba(255, 159, 104, .13);
+    --error-bg: rgba(255, 107, 107, .08);
+    --error-line: rgba(255, 107, 107, .45);
+    --error-ink: #ffc9c9;
+    --warn-bg: rgba(245, 177, 61, .07);
+    --warn-line: rgba(245, 177, 61, .4);
+    --warn-ink: #f7deb0;
+    --ok-line: rgba(93, 220, 154, .4);
+    --bad-line: rgba(255, 107, 107, .45);
+    --toggle-on-bg: rgba(255, 255, 255, .09);
+    --toggle-on-shadow: rgba(0, 0, 0, .35);
+  }
+
+  /* 明亮模式：白底蓝图风，强调色整体压暗以保证对比度 */
+  html[data-theme="light"] {
+    --bg: #f5f7fa;
+    --bg-grad-a: #e6eef9;
+    --bg-grad-b: #eef3f9;
+    --panel: #ffffff;
+    --panel-2: #f2f5f9;
+    --line: #dbe3ec;
+    --line-2: #b9c6d5;
+    --ink: #0f1720;
+    --ink-2: #33414f;
+    --muted: #64748b;
+    --amber: #9a5b00;
+    --teal: #0b7d75;
+    --violet: #5b46c4;
+    --green: #17794a;
+    --red: #b42318;
+    --blue: #1d4ed8;
+    --grid: rgba(24, 46, 76, .05);
+    --topbar-bg: rgba(245, 247, 250, .88);
+    --surface-1: rgba(15, 23, 32, .022);
+    --surface-2: rgba(15, 23, 32, .028);
+    --surface-3: rgba(15, 23, 32, .045);
+    --input-bg: #ffffff;
+    --branch-bg: #f8fafc;
+    --inspector-bg: #ffffff;
+    --code-bg: #f3f7fb;
+    --code-ink: #1f2d3d;
+    --shadow-drawer: -18px 0 40px rgba(23, 43, 77, .16);
+    --shadow-node: 0 6px 18px rgba(23, 43, 77, .12);
+    --amber-faint: rgba(154, 91, 0, .05);
+    --amber-soft: rgba(154, 91, 0, .08);
+    --amber-strong-bg: rgba(154, 91, 0, .18);
+    --amber-line: rgba(154, 91, 0, .28);
+    --teal-faint: rgba(11, 125, 117, .06);
+    --teal-soft: rgba(11, 125, 117, .1);
+    --teal-line: rgba(11, 125, 117, .3);
+    --buf: #b4560f;
+    --buf-line: rgba(180, 86, 15, .35);
+    --buf-stripe: rgba(180, 86, 15, .1);
+    --error-bg: rgba(180, 35, 24, .07);
+    --error-line: rgba(180, 35, 24, .3);
+    --error-ink: #8a1f14;
+    --warn-bg: rgba(154, 91, 0, .06);
+    --warn-line: rgba(154, 91, 0, .3);
+    --warn-ink: #7a4a00;
+    --ok-line: rgba(23, 121, 74, .32);
+    --bad-line: rgba(180, 35, 24, .3);
+    --toggle-on-bg: #ffffff;
+    --toggle-on-shadow: rgba(23, 43, 77, .18);
+  }

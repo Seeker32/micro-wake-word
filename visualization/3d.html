@@ -1,0 +1,1120 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>microWakeWord · MixedNet 3D 架构</title>
+<script>
+  // 与 index.html 共用主题记忆，首屏前应用，避免闪烁
+  (function () {
+    var theme = 'dark';
+    try {
+      var q = new URLSearchParams(location.search).get('theme');
+      var saved = localStorage.getItem('mww-viz-theme');
+      theme = q === 'light' || q === 'dark' ? q : (saved === 'light' ? 'light' : 'dark');
+    } catch (e) { /* file:// 或隐私模式下 localStorage 可能不可用 */ }
+    document.documentElement.dataset.theme = theme;
+  })();
+</script>
+<link rel="stylesheet" href="theme.css" />
+<style>
+  * { box-sizing: border-box; }
+
+  html, body { margin: 0; height: 100%; }
+
+  body {
+    font-family: var(--sans);
+    color: var(--ink);
+    font-size: 14px;
+    line-height: 1.55;
+    background:
+      radial-gradient(900px 480px at 15% -10%, var(--bg-grad-a) 0%, transparent 62%),
+      radial-gradient(800px 420px at 90% 0%, var(--bg-grad-b) 0%, transparent 60%),
+      var(--bg);
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  code { font-family: var(--mono); font-size: .88em; color: var(--amber); }
+
+  /* ---------- 顶栏 ---------- */
+  .topbar {
+    position: relative;
+    z-index: 6;
+    height: 66px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 0 22px;
+    border-bottom: 1px solid var(--line);
+    background: var(--topbar-bg);
+    backdrop-filter: blur(12px);
+  }
+
+  .brand { display: flex; align-items: center; gap: 13px; min-width: 0; }
+
+  .mark {
+    flex: none;
+    width: 38px;
+    height: 38px;
+    display: grid;
+    place-items: center;
+    border-radius: 10px;
+    border: 1px solid var(--amber-line);
+    background: linear-gradient(150deg, var(--amber-strong-bg), var(--amber-faint));
+    color: var(--amber);
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+
+  h1 { margin: 0; font-size: 15.5px; font-weight: 650; letter-spacing: .01em; }
+
+  .sub { margin: 2px 0 0; color: var(--muted); font-size: 11.5px; }
+
+  .top-right { display: flex; align-items: center; gap: 12px; }
+
+  .back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 10px;
+    border: 1px solid var(--line-2);
+    border-radius: 8px;
+    color: var(--ink-2);
+    font-size: 11.5px;
+    text-decoration: none;
+    transition: border-color .15s, color .15s;
+  }
+
+  .back-link:hover { border-color: var(--teal); color: var(--ink); }
+
+  .theme {
+    display: inline-flex;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--panel-2);
+  }
+
+  .theme-btn {
+    border: 0;
+    border-radius: 999px;
+    padding: 3px 10px;
+    background: transparent;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .04em;
+    cursor: pointer;
+  }
+
+  .theme-btn:hover { color: var(--ink); }
+
+  .theme-btn[aria-pressed="true"] {
+    background: var(--toggle-on-bg);
+    color: var(--ink);
+    box-shadow: inset 0 0 0 1px var(--line-2), 0 1px 3px var(--toggle-on-shadow);
+  }
+
+  /* ---------- 布局 ---------- */
+  .layout {
+    display: grid;
+    grid-template-columns: 302px minmax(0, 1fr);
+    height: calc(100vh - 66px);
+  }
+
+  .panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 13px;
+    overflow-y: auto;
+    border-right: 1px solid var(--line);
+    background: var(--panel);
+  }
+
+  .panel::-webkit-scrollbar { width: 8px; }
+  .panel::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
+
+  .panel-title {
+    margin: 0 0 8px;
+    font-size: 10.5px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+  }
+
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    background: var(--panel-2);
+    padding: 11px 12px 12px;
+  }
+
+  .presets { display: grid; gap: 7px; }
+
+  .preset {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 12.5px;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+
+  .preset small {
+    display: block;
+    margin-top: 1px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10px;
+  }
+
+  .preset:hover { border-color: var(--amber); background: var(--amber-faint); }
+  .preset.is-active { border-color: var(--amber); background: var(--amber-soft); }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+
+  .btn {
+    padding: 6px 9px;
+    border: 1px solid var(--line-2);
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--ink-2);
+    font-family: var(--sans);
+    font-size: 11.5px;
+    cursor: pointer;
+    transition: border-color .15s, color .15s, background .15s;
+  }
+
+  .btn:hover { border-color: var(--teal); color: var(--ink); }
+  .btn[aria-pressed="true"] { border-color: var(--teal); color: var(--teal); background: var(--teal-faint); }
+
+  .note { margin: 8px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+
+  .stat-row { display: flex; gap: 8px; }
+
+  .stat {
+    flex: 1;
+    padding: 7px 9px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--panel);
+  }
+
+  .stat b { display: block; font-family: var(--mono); font-size: 14px; }
+  .stat span { display: block; color: var(--muted); font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase; }
+
+  .layer-list { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+
+  .layer-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 7px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--ink-2);
+    font-family: var(--sans);
+    font-size: 11.5px;
+    text-align: left;
+    cursor: pointer;
+    transition: background .15s, border-color .15s;
+  }
+
+  .layer-row:hover { background: var(--surface-1); color: var(--ink); }
+  .layer-row.is-selected { border-color: var(--line-2); background: var(--surface-2); color: var(--ink); }
+
+  .dot { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+
+  .layer-row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .layer-row .params { margin-left: auto; flex: none; font-family: var(--mono); font-size: 9.5px; color: var(--muted); }
+
+  /* ---------- 舞台 ---------- */
+  .stage { position: relative; min-width: 0; overflow: hidden; }
+
+  .scene {
+    position: absolute;
+    inset: 0;
+    perspective: 1500px;
+    perspective-origin: 50% 46%;
+    overflow: hidden;
+    cursor: grab;
+    touch-action: none;
+  }
+
+  .scene:active { cursor: grabbing; }
+
+  .world {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 0;
+    height: 0;
+    transform-style: preserve-3d;
+    transform: scale(var(--zoom, 1)) rotateX(var(--tilt, -58deg)) rotateY(var(--yaw, -32deg));
+  }
+
+  .face {
+    position: absolute;
+    border: 1px solid;
+    background-image: linear-gradient(155deg, rgba(255, 255, 255, .22), rgba(255, 255, 255, 0) 70%);
+  }
+
+  .face:hover,
+  .face.is-hover {
+    border-color: var(--ink-2) !important;
+    background-image: linear-gradient(rgba(255, 255, 255, .14), rgba(255, 255, 255, .14));
+  }
+
+  .face.is-selected {
+    border-color: var(--ink) !important;
+    background-image: linear-gradient(rgba(255, 255, 255, .26), rgba(255, 255, 255, .26));
+  }
+
+  .labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+
+  .label {
+    position: absolute;
+    left: 0;
+    top: 0;
+    padding: 3px 7px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--panel);
+    box-shadow: var(--shadow-node);
+    white-space: nowrap;
+    will-change: transform;
+  }
+
+  .label[data-active="true"] { border-color: var(--teal); }
+
+  .label b { display: block; font-size: 10.5px; font-weight: 600; color: var(--ink); }
+
+  .label span {
+    display: block;
+    margin-top: 1px;
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--muted);
+  }
+
+  .hud {
+    position: absolute;
+    left: 16px;
+    right: 16px;
+    bottom: 14px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--muted);
+    font-size: 11px;
+    pointer-events: none;
+  }
+
+  .hud .tips { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+
+  .hud kbd {
+    padding: 1px 5px;
+    border: 1px solid var(--line-2);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    background: var(--panel);
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--ink-2);
+  }
+
+  /* ---------- 详情 ---------- */
+  .inspector {
+    position: fixed;
+    z-index: 30;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(380px, 100vw);
+    padding: 20px 22px 44px;
+    overflow: auto;
+    border-left: 1px solid var(--line-2);
+    background: var(--inspector-bg);
+    box-shadow: var(--shadow-drawer);
+    transform: translateX(102%);
+    transition: transform .22s ease;
+  }
+
+  .inspector.is-open { transform: translateX(0); }
+
+  .inspector-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+
+  .eyebrow {
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+
+  .inspector h2 { margin: 4px 0 0; font-size: 16px; font-weight: 650; }
+
+  .icon-btn {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--line-2);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+  }
+
+  .icon-btn:hover { color: var(--ink); }
+
+  .kv { margin: 14px 0 4px; border-top: 1px solid var(--line); }
+
+  .kv > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .kv dt { color: var(--muted); font-size: 11.5px; }
+  .kv dd { margin: 0; text-align: right; font-family: var(--mono); font-size: 11.5px; color: var(--ink); }
+
+  .inspector h3 {
+    margin: 16px 0 6px;
+    font-size: 10px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+  }
+
+  .inspector p { margin: 0; color: var(--ink-2); font-size: 12.5px; }
+
+  .inspector pre {
+    margin: 0;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--code-bg);
+    color: var(--code-ink);
+    font-size: 10.5px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .inspector pre code { color: inherit; font-size: inherit; }
+
+  .inspector .formula { color: var(--amber); font-family: var(--mono); font-size: 11.5px; }
+
+  .to-2d {
+    display: inline-flex;
+    margin-top: 18px;
+    padding: 6px 11px;
+    border: 1px solid var(--line-2);
+    border-radius: 8px;
+    color: var(--teal);
+    font-size: 11.5px;
+    text-decoration: none;
+  }
+
+  .to-2d:hover { border-color: var(--teal); }
+
+  @media (max-width: 900px) {
+    body { overflow: auto; }
+    .layout { grid-template-columns: 1fr; height: auto; }
+    .panel { border-right: 0; border-bottom: 1px solid var(--line); max-height: none; }
+    .layer-list { max-height: 240px; }
+    .stage { height: 74vh; min-height: 420px; }
+    .scene { position: absolute; }
+    .sub { display: none; }
+  }
+
+  @media (max-width: 560px) {
+    .topbar { height: auto; padding: 10px 14px; flex-wrap: wrap; }
+    .layout { min-height: calc(100vh - 66px); }
+    .hud { font-size: 10px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .inspector { transition: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="mark">μWW</div>
+    <div>
+      <h1>microWakeWord · MixedNet 3D 架构</h1>
+      <p class="sub">每层是一块特征板：宽 ∝ 通道数，深 ∝ 时间帧，厚 ∝ 参数量 · 拖拽旋转 · 滚轮缩放</p>
+    </div>
+  </div>
+  <div class="top-right">
+    <a class="back-link" href="index.html">↔ 2D 结构图</a>
+    <div class="theme" role="group" aria-label="显示主题">
+      <button type="button" class="theme-btn" data-theme-set="dark" aria-pressed="true">暗色</button>
+      <button type="button" class="theme-btn" data-theme-set="light" aria-pressed="false">明亮</button>
+    </div>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="panel">
+    <section class="card">
+      <h2 class="panel-title">预设</h2>
+      <div class="presets">
+        <button class="preset" data-preset="trained">当前训练配置<small>hi_circle_v1 · 26,049 参数</small></button>
+        <button class="preset" data-preset="light">轻量示例<small>3 块 · 演示尺寸差异</small></button>
+      </div>
+      <div class="stat-row" style="margin-top:10px">
+        <div class="stat"><b id="stat-params">—</b><span>权重参数</span></div>
+        <div class="stat"><b id="stat-layers">—</b><span>可视层数</span></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 class="panel-title">视角</h2>
+      <div class="grid2">
+        <button class="btn" id="toggle-expanded" aria-pressed="false">展开层距</button>
+        <button class="btn" id="toggle-labels" aria-pressed="true">显示标签</button>
+        <button class="btn" id="toggle-spin" aria-pressed="false">自动旋转</button>
+        <button class="btn" id="reset-view">重置视角</button>
+      </div>
+      <p class="note">拖拽旋转 · 滚轮缩放 · 双击重置 · 方向键微调（<kbd>Tab</kbd> 聚焦画面）。</p>
+    </section>
+
+    <section class="card" style="flex:1;min-height:180px;display:flex;flex-direction:column;min-height:0">
+      <h2 class="panel-title">图层（点击查看详情）</h2>
+      <div class="layer-list" id="layer-list"></div>
+    </section>
+
+    <p class="note" style="margin:0 2px">数据来自 <code>microwakeword/mixednet.py</code> 的结构公式，与 2D 页面共用 <code>viz-core.js</code>。</p>
+  </aside>
+
+  <section class="stage">
+    <div class="scene" id="scene" tabindex="0" role="application" aria-label="MixedNet 三维结构，可拖拽旋转">
+      <div class="world" id="world"></div>
+      <div class="labels" id="labels"></div>
+    </div>
+    <div class="hud">
+      <div class="tips">
+        <span>拖拽旋转</span>
+        <span>滚轮缩放</span>
+        <span>点击层查看详情</span>
+      </div>
+      <span id="hud-view">训练 · 非流式</span>
+    </div>
+  </section>
+</main>
+
+<aside class="inspector" id="inspector" aria-live="polite"></aside>
+
+<script src="viz-core.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var CORE = (typeof window !== 'undefined' ? window : globalThis).MWWViz;
+  var PRESETS = CORE.PRESETS;
+  var KIND = CORE.KIND;
+  var clone = CORE.clone;
+  var fmt = CORE.fmt;
+  var buildGraph = CORE.buildGraph;
+
+  var PALETTE = {
+    dark: {
+      panel: '#111823',
+      io: '#93a4b9', reshape: '#93a4b9', conv: '#f5b13d', act: '#5ddc9a',
+      mixconv: '#37d6c9', bn: '#6ea8fe', residual: '#a78bfa', add: '#a78bfa',
+      buffer: '#ff9f68', attention: '#a78bfa', pool: '#6ea8fe',
+      flatten: '#93a4b9', dense: '#ff6b6b'
+    },
+    light: {
+      panel: '#ffffff',
+      io: '#64748b', reshape: '#64748b', conv: '#9a5b00', act: '#17794a',
+      mixconv: '#0b7d75', bn: '#1d4ed8', residual: '#5b46c4', add: '#5b46c4',
+      buffer: '#b4560f', attention: '#5b46c4', pool: '#1d4ed8',
+      flatten: '#64748b', dense: '#b42318'
+    }
+  };
+
+  var state = {
+    config: null,
+    graph: null,
+    theme: 'dark',
+    yaw: -32,
+    tilt: -58,
+    zoom: 1,
+    expanded: false,
+    labels: true,
+    spin: false,
+    selected: null,
+    hover: null,
+    items: [],
+    spinRaf: 0
+  };
+
+  var scene = document.getElementById('scene');
+  var world = document.getElementById('world');
+  var labelsHost = document.getElementById('labels');
+  var listHost = document.getElementById('layer-list');
+  var inspector = document.getElementById('inspector');
+
+  /* ---------------- 工具 ---------------- */
+
+  function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function hexToRgb(hex) {
+    var h = hex.replace('#', '');
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+
+  // 把强调色按比例混进面板底色，得到实色面，避免半透明叠层互相透视
+  function mix(accent, panel, ratio) {
+    var a = hexToRgb(accent);
+    var b = hexToRgb(panel);
+    var out = a.map(function (v, i) { return Math.round(v * ratio + b[i] * (1 - ratio)); });
+    return 'rgb(' + out.join(',') + ')';
+  }
+
+  function parseShape(node) {
+    var nums = String(node.shapeOut.train).match(/\d+/g);
+    var arr = nums ? nums.map(Number) : [];
+    var t = 1, c = 1;
+    if (arr.length >= 4) { t = arr[1]; c = arr[3]; }
+    else if (arr.length === 3) { t = arr[1]; c = arr[2]; }
+    else if (arr.length === 2) { t = 1; c = arr[1]; }
+    return { t: Math.max(1, t), c: Math.max(1, c) };
+  }
+
+  function accentOf(kind) {
+    var p = PALETTE[state.theme] || PALETTE.dark;
+    return p[kind] || p.flatten;
+  }
+
+  /* ---------------- 数据 ---------------- */
+
+  function collectLayers(graph) {
+    var out = [];
+    var blockIndex = 0;
+    graph.seq.forEach(function (node) {
+      if (node.kind === 'block') {
+        blockIndex += 1;
+        node.children.forEach(function (child) {
+          out.push({
+            node: child,
+            sub: true,
+            group: node.id,
+            label: 'B' + blockIndex + ' · ' + child.title
+          });
+        });
+      } else {
+        out.push({ node: node, sub: false, group: 'top', label: node.title });
+      }
+    });
+    return out;
+  }
+
+  function layout(items, expanded) {
+    var subStep = expanded ? 36 : 24;
+    var topStep = expanded ? 62 : 42;
+    var groupGap = expanded ? 16 : 10;
+    var y = 0;
+    items.forEach(function (it, i) {
+      if (i > 0) {
+        var prev = items[i - 1];
+        y += it.sub ? subStep : topStep;
+        if (it.group !== prev.group) y += groupGap;
+      }
+      it.y = y;
+    });
+    var total = items.length ? y : 0;
+    items.forEach(function (it) { it.y -= total / 2; });
+  }
+
+  /* ---------------- 渲染 ---------------- */
+
+  function renderFaces(item) {
+    var accent = accentOf(item.node.kind);
+    var panel = (PALETTE[state.theme] || PALETTE.dark).panel;
+    var topColor = mix(accent, panel, 0.52);
+    var frontColor = mix(accent, panel, 0.32);
+    var sideColor = mix(accent, panel, 0.24);
+    var backColor = mix(accent, panel, 0.2);
+    var bottomColor = mix(accent, panel, 0.14);
+    var borderColor = mix(accent, panel, 0.72);
+    var w = item.w, d = item.d, h = item.h;
+    var base = 'translate3d(0,' + item.y.toFixed(2) + 'px,0) ';
+
+    function face(fw, fh, local, color, extraClass) {
+      return '<div class="face' + (extraClass ? ' ' + extraClass : '') + '" data-id="' + item.node.id + '" style="' +
+        'left:' + (-fw / 2).toFixed(2) + 'px;' +
+        'top:' + (-fh / 2).toFixed(2) + 'px;' +
+        'width:' + fw.toFixed(2) + 'px;' +
+        'height:' + fh.toFixed(2) + 'px;' +
+        'background-color:' + color + ';' +
+        'border-color:' + borderColor + ';' +
+        'transform:' + base + local + '"></div>';
+    }
+
+    // 六个面直接做 .world 的子元素，让浏览器统一做深度排序
+    return face(w, d, 'rotateX(90deg) translateZ(' + (h / 2).toFixed(2) + 'px)', topColor, 'face--top') +
+      face(w, d, 'rotateX(-90deg) translateZ(' + (h / 2).toFixed(2) + 'px)', bottomColor) +
+      face(w, h, 'translateZ(' + (d / 2).toFixed(2) + 'px)', frontColor) +
+      face(w, h, 'rotateY(180deg) translateZ(' + (d / 2).toFixed(2) + 'px)', backColor) +
+      face(d, h, 'rotateY(90deg) translateZ(' + (w / 2).toFixed(2) + 'px)', sideColor) +
+      face(d, h, 'rotateY(-90deg) translateZ(' + (w / 2).toFixed(2) + 'px)', sideColor);
+  }
+
+  function renderScene() {
+    var graph = buildGraph(state.config);
+    state.graph = graph;
+    var items = collectLayers(graph);
+
+    var maxC = 1, maxT = 1, maxP = 1;
+    items.forEach(function (it) {
+      var dims = parseShape(it.node);
+      it.t = dims.t;
+      it.c = dims.c;
+      maxC = Math.max(maxC, it.c);
+      maxT = Math.max(maxT, it.t);
+      maxP = Math.max(maxP, it.node.params || 0);
+    });
+
+    items.forEach(function (it) {
+      it.w = 100 + 250 * Math.sqrt(it.c / maxC);
+      it.d = 60 + 115 * Math.sqrt(it.t / maxT);
+      it.h = 6 + 10 * Math.pow((it.node.params || 0) / maxP, 0.4);
+    });
+
+    layout(items, state.expanded);
+    state.items = items;
+
+    world.innerHTML = items.map(renderFaces).join('');
+    labelsHost.innerHTML = items.map(function (it, i) {
+      var side = it.sub ? 'right' : (i % 2 === 0 ? 'right' : 'left');
+      return '<div class="label" data-id="' + it.node.id + '" data-side="' + side + '">' +
+        '<b>' + escapeHtml(it.label) + '</b>' +
+        '<span>' + it.node.shapeOut.train + ' · ' + fmt(it.node.params || 0) + ' params</span>' +
+        '</div>';
+    }).join('');
+
+    var labelEls = {};
+    labelsHost.querySelectorAll('.label').forEach(function (el) {
+      labelEls[el.dataset.id] = el;
+    });
+    items.forEach(function (it, i) {
+      it.side = it.sub ? 'right' : (i % 2 === 0 ? 'right' : 'left');
+      it.labelEl = labelEls[it.node.id] || null;
+      it.topFace = world.querySelector('.face--top[data-id="' + it.node.id + '"]');
+    });
+
+    document.getElementById('stat-params').textContent = fmt(graph.stats.weights);
+    document.getElementById('stat-layers').textContent = items.length;
+
+    applyTransform();
+    renderList();
+    applySelection();
+    requestAnimationFrame(function () {
+      autoFit();
+      syncLabels();
+    });
+  }
+
+  function renderList() {
+    listHost.innerHTML = state.items.map(function (it) {
+      return '<button class="layer-row" data-id="' + it.node.id + '" title="' + escapeHtml(it.node.type) + '">' +
+        '<span class="dot" style="background:' + accentOf(it.node.kind) + '"></span>' +
+        '<span class="name">' + escapeHtml(it.label) + '</span>' +
+        '<span class="params">' + (it.node.params ? fmt(it.node.params) : '—') + '</span>' +
+        '</button>';
+    }).join('');
+  }
+
+  /* ---------------- 变换与标签 ---------------- */
+
+  function applyTransform() {
+    world.style.setProperty('--yaw', state.yaw.toFixed(2) + 'deg');
+    world.style.setProperty('--tilt', state.tilt.toFixed(2) + 'deg');
+    world.style.setProperty('--zoom', state.zoom.toFixed(3));
+  }
+
+  function syncLabels() {
+    if (!state.items.length) return;
+    labelsHost.style.display = '';
+    var host = labelsHost.getBoundingClientRect();
+    var placed = [];
+
+    state.items.forEach(function (it) {
+      if (!it.topFace || !it.labelEl) return;
+      var active = it.node.id === state.hover || it.node.id === state.selected;
+      var visible = active || (state.labels && !it.sub);
+      it.labelEl.style.display = visible ? '' : 'none';
+      if (!visible) return;
+      it.labelEl.setAttribute('data-active', active ? 'true' : 'false');
+      // 用顶面的投影矩形定位，标签才能贴着这一层的“板身”，而不是某个倾斜角上的顶点
+      var r = it.topFace.getBoundingClientRect();
+      var lw = it.labelEl.offsetWidth || 120;
+      var x = (it.side === 'left' ? r.left - 8 : r.right + 8) - host.left;
+      var y = (r.top + r.height / 2) - host.top;
+      if (it.side === 'left') x = Math.max(x, 8 + lw);
+      else x = Math.min(x, host.width - 8 - lw);
+      placed.push({ it: it, x: x, y: y, side: it.side });
+      it.labelEl.style.transform = 'translate3d(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px,0) translate(' +
+        (it.side === 'left' ? '-100%' : '0') + ',-50%)';
+    });
+
+    // 同侧的标签按纵向排序后逐列下推，避免遮住（旗帜多时很实用）
+    ['left', 'right'].forEach(function (side) {
+      var column = placed.filter(function (p) { return p.side === side; })
+        .sort(function (a, b) { return a.y - b.y; });
+      var lastBottom = -Infinity;
+      column.forEach(function (p) {
+        var el = p.it.labelEl;
+        var h = el.offsetHeight || 26;
+        var top = p.y - h / 2;
+        if (top < lastBottom + 4) top = lastBottom + 4;
+        if (top !== p.y - h / 2) {
+          el.style.transform = 'translate3d(' + p.x.toFixed(1) + 'px,' + top.toFixed(1) + 'px,0) translate(' +
+            (side === 'left' ? '-100%' : '0') + ',0)';
+        }
+        lastBottom = top + h;
+      });
+    });
+  }
+
+  function autoFit() {
+    if (!state.items.length) return;
+    var box = scene.getBoundingClientRect();
+    var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    state.items.forEach(function (it) {
+      if (!it.topFace) return;
+      var r = it.topFace.getBoundingClientRect();
+      if (!r.width && !r.height) return;
+      minX = Math.min(minX, r.left);
+      maxX = Math.max(maxX, r.right);
+      minY = Math.min(minY, r.top);
+      maxY = Math.max(maxY, r.bottom);
+    });
+    if (!isFinite(minX)) return;
+    var pad = 120;
+    var fit = Math.min((box.width - pad) / (maxX - minX), (box.height - pad) / (maxY - minY));
+    state.zoom = clamp(fit, 0.32, 1.25);
+    applyTransform();
+    syncLabels();
+  }
+
+  /* ---------------- 选择与详情 ---------------- */
+
+  function applySelection() {
+    world.querySelectorAll('.face.is-selected').forEach(function (el) { el.classList.remove('is-selected'); });
+    listHost.querySelectorAll('.layer-row.is-selected').forEach(function (el) { el.classList.remove('is-selected'); });
+    if (!state.selected) return;
+    world.querySelectorAll('.face[data-id="' + state.selected + '"]').forEach(function (el) { el.classList.add('is-selected'); });
+    var row = listHost.querySelector('.layer-row[data-id="' + state.selected + '"]');
+    if (row) {
+      row.classList.add('is-selected');
+      if (row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
+    }
+    renderInspector();
+    syncLabels();
+  }
+
+  function setHover(id) {
+    if (state.hover === id) return;
+    state.hover = id;
+    world.querySelectorAll('.face.is-hover').forEach(function (el) { el.classList.remove('is-hover'); });
+    if (id) {
+      world.querySelectorAll('.face[data-id="' + id + '"]').forEach(function (el) { el.classList.add('is-hover'); });
+    }
+    syncLabels();
+  }
+
+  function select(id) {
+    state.selected = id;
+    applySelection();
+  }
+
+  function renderInspector() {
+    var node = state.selected && state.graph ? state.graph.index.get(state.selected) : null;
+    if (!node) {
+      inspector.classList.remove('is-open');
+      inspector.innerHTML = '';
+      return;
+    }
+    var k = KIND[node.kind] || KIND.flatten;
+    var html = '<div class="inspector-head">' +
+      '<div><span class="eyebrow">' + k.label + '</span><h2>' + escapeHtml(node.title) + '</h2></div>' +
+      '<button class="icon-btn" data-close aria-label="关闭详情">✕</button>' +
+      '</div>' +
+      '<dl class="kv">' +
+        '<div><dt>层类型</dt><dd>' + escapeHtml(node.type) + '</dd></div>' +
+        '<div><dt>输入形状</dt><dd>' + node.shapeIn.train + '</dd></div>' +
+        '<div><dt>输出形状</dt><dd>' + node.shapeOut.train + '</dd></div>' +
+        '<div><dt>权重参数</dt><dd>' + fmt(node.params) + '</dd></div>' +
+        (node.buffer ? '<div><dt>ring buffer</dt><dd>' + node.buffer.frames + ' 帧 × ' + node.buffer.channels + ' ch</dd></div>' : '') +
+      '</dl>' +
+      '<h3>作用</h3><p>' + node.desc + '</p>' +
+      '<h3>推导</h3><p class="formula">' + node.formula + '</p>' +
+      '<h3>源码</h3><pre><code>' + escapeHtml(node.code) + '</code></pre>' +
+      '<a class="to-2d" href="index.html">在 2D 结构图中查看完整上下文 →</a>';
+    inspector.innerHTML = html;
+    inspector.classList.add('is-open');
+  }
+
+  /* ---------------- 主题 ---------------- */
+
+  function applyTheme(theme, persist) {
+    state.theme = theme === 'light' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = state.theme;
+    document.querySelectorAll('[data-theme-set]').forEach(function (btn) {
+      btn.setAttribute('aria-pressed', btn.dataset.themeSet === state.theme ? 'true' : 'false');
+    });
+    if (persist) {
+      try { localStorage.setItem('mww-viz-theme', state.theme); } catch (e) { /* 忽略 */ }
+    }
+    if (state.config) {
+      renderScene();
+      syncUrl();
+    }
+  }
+
+  /* ---------------- URL ---------------- */
+
+  function syncUrl() {
+    var p = new URLSearchParams();
+    p.set('preset', JSON.stringify(state.config) === JSON.stringify(PRESETS.light.cfg) ? 'light' : 'trained');
+    p.set('theme', state.theme);
+    try {
+      history.replaceState(null, '', location.pathname + '?' + p.toString());
+    } catch (e) { /* file:// 下个别浏览器禁止改写历史 */ }
+  }
+
+  function readInitialConfig() {
+    var q = new URLSearchParams(location.search);
+    return clone(q.get('preset') === 'light' ? PRESETS.light.cfg : PRESETS.trained.cfg);
+  }
+
+  /* ---------------- 交互 ---------------- */
+
+  var drag = null;
+
+  function bindEvents() {
+    scene.addEventListener('pointerdown', function (e) {
+      if (e.button !== undefined && e.button !== 0) return;
+      drag = { x: e.clientX, y: e.clientY, yaw: state.yaw, tilt: state.tilt, moved: false };
+      try { scene.setPointerCapture(e.pointerId); } catch (err) { /* 忽略 */ }
+      scene.focus({ preventScroll: true });
+    });
+
+    scene.addEventListener('pointermove', function (e) {
+      if (!drag) return;
+      var dx = e.clientX - drag.x;
+      var dy = e.clientY - drag.y;
+      if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+      state.yaw = drag.yaw + dx * 0.36;
+      state.tilt = clamp(drag.tilt - dy * 0.3, -86, -8);
+      applyTransform();
+      syncLabels();
+    });
+
+    scene.addEventListener('pointerup', function (e) {
+      if (drag && !drag.moved) {
+        // 指针被 scene 捕获，e.target 不会是面，用坐标反查
+        var el = document.elementFromPoint(e.clientX, e.clientY);
+        var face = el && el.closest ? el.closest('.face') : null;
+        if (face) select(face.dataset.id);
+      }
+      drag = null;
+    });
+
+    scene.addEventListener('pointercancel', function () { drag = null; });
+
+    scene.addEventListener('pointerover', function (e) {
+      var face = e.target.closest ? e.target.closest('.face') : null;
+      if (face) setHover(face.dataset.id);
+    });
+
+    scene.addEventListener('pointerout', function (e) {
+      var face = e.target.closest ? e.target.closest('.face') : null;
+      if (!face) return;
+      var to = e.relatedTarget && e.relatedTarget.closest ? e.relatedTarget.closest('.face') : null;
+      if (!to || to.dataset.id !== face.dataset.id) setHover(null);
+    });
+
+    scene.addEventListener('pointerleave', function () { setHover(null); });
+
+    scene.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      state.zoom = clamp(state.zoom * Math.exp(-e.deltaY * 0.0012), 0.32, 2);
+      applyTransform();
+      syncLabels();
+    }, { passive: false });
+
+    scene.addEventListener('dblclick', function () {
+      state.yaw = -32;
+      state.tilt = -58;
+      autoFit();
+      syncLabels();
+    });
+
+    scene.addEventListener('keydown', function (e) {
+      var used = true;
+      if (e.key === 'ArrowLeft') state.yaw -= 6;
+      else if (e.key === 'ArrowRight') state.yaw += 6;
+      else if (e.key === 'ArrowUp') state.tilt = clamp(state.tilt + 4, -86, -8);
+      else if (e.key === 'ArrowDown') state.tilt = clamp(state.tilt - 4, -86, -8);
+      else if (e.key === '+' || e.key === '=') state.zoom = clamp(state.zoom * 1.1, 0.32, 2);
+      else if (e.key === '-' || e.key === '_') state.zoom = clamp(state.zoom / 1.1, 0.32, 2);
+      else if (e.key === 'Escape') { closeInspector(); used = false; }
+      else used = false;
+      if (used) {
+        e.preventDefault();
+        applyTransform();
+        syncLabels();
+      }
+    });
+
+    listHost.addEventListener('click', function (e) {
+      var row = e.target.closest('.layer-row');
+      if (row) select(row.dataset.id);
+    });
+
+    inspector.addEventListener('click', function (e) {
+      if (e.target.closest('[data-close]')) closeInspector();
+    });
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closeInspector();
+    });
+
+    var resizeTimer = 0;
+    window.addEventListener('resize', function () {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function () { autoFit(); syncLabels(); }, 120);
+    });
+
+    document.querySelectorAll('[data-preset]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        state.config = clone(PRESETS[btn.dataset.preset].cfg);
+        state.selected = null;
+        closeInspector();
+        markPreset();
+        renderScene();
+        syncUrl();
+      });
+    });
+
+    document.querySelectorAll('[data-theme-set]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        applyTheme(btn.dataset.themeSet, true);
+      });
+    });
+
+    document.getElementById('toggle-expanded').addEventListener('click', function (e) {
+      state.expanded = !state.expanded;
+      e.currentTarget.setAttribute('aria-pressed', state.expanded ? 'true' : 'false');
+      renderScene();
+    });
+
+    document.getElementById('toggle-labels').addEventListener('click', function (e) {
+      state.labels = !state.labels;
+      e.currentTarget.setAttribute('aria-pressed', state.labels ? 'true' : 'false');
+      syncLabels();
+    });
+
+    document.getElementById('toggle-spin').addEventListener('click', function (e) {
+      state.spin = !state.spin;
+      e.currentTarget.setAttribute('aria-pressed', state.spin ? 'true' : 'false');
+      if (state.spin) spinLoop();
+      else cancelAnimationFrame(state.spinRaf);
+    });
+
+    document.getElementById('reset-view').addEventListener('click', function () {
+      state.yaw = -32;
+      state.tilt = -58;
+      autoFit();
+      syncLabels();
+    });
+  }
+
+  function spinLoop() {
+    if (!state.spin) return;
+    state.yaw += 0.35;
+    applyTransform();
+    syncLabels();
+    state.spinRaf = requestAnimationFrame(spinLoop);
+  }
+
+  function closeInspector() {
+    state.selected = null;
+    inspector.classList.remove('is-open');
+    inspector.innerHTML = '';
+    world.querySelectorAll('.face.is-selected').forEach(function (el) { el.classList.remove('is-selected'); });
+    listHost.querySelectorAll('.layer-row.is-selected').forEach(function (el) { el.classList.remove('is-selected'); });
+    syncLabels();
+  }
+
+  function markPreset() {
+    var current = JSON.stringify(state.config);
+    document.querySelectorAll('[data-preset]').forEach(function (btn) {
+      var preset = PRESETS[btn.dataset.preset];
+      btn.classList.toggle('is-active', JSON.stringify(preset.cfg) === current);
+    });
+  }
+
+  function init() {
+    state.config = readInitialConfig();
+    state.theme = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+    document.querySelectorAll('[data-theme-set]').forEach(function (btn) {
+      btn.setAttribute('aria-pressed', btn.dataset.themeSet === state.theme ? 'true' : 'false');
+    });
+    bindEvents();
+    markPreset();
+    renderScene();
+    syncUrl();
+  }
+
+  if (typeof document !== 'undefined' && document.getElementById('scene')) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+  }
+
+  globalThis.__viz3d = {
+    state: state,
+    renderScene: renderScene,
+    collectLayers: collectLayers,
+    select: select,
+    autoFit: autoFit
+  };
+})();
+</script>
+</body>
+</html>

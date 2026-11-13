@@ -1,191 +1,100 @@
-# basic_training_notebook 的数据处理流程
+# basic_training_notebook 全流程
 
-本文只讲 `notebooks/basic_training_notebook.ipynb` 里**数据从原始音频到训练 batch** 的全过程，按 cell 顺序对应到代码位置。许可与合规问题见 [licensed_training_data.md](licensed_training_data.md)，数据源清单见 [data_sources.md](data_sources.md)。
+本文对应 [`notebooks/basic_training_notebook.ipynb`](../notebooks/basic_training_notebook.ipynb) 当前代码，按从上到下的执行顺序说明环境、数据、训练、评估和归档。下面的 cell 编号从 0 开始，插入或删除单元格后可能变化。许可细节见 [licensed_training_data.md](licensed_training_data.md)，数据源见 [data_sources.md](data_sources.md)。
 
-## 0. 总览
+## 流程总览
 
-```
-target_word (IPA)
-   │  cell 3/4  Piper TTS
-   ▼
-generated_samples/hey_kamana/*.wav          1000 条正样本音频
-   │
-   │  cell 5     download + license filter + hash
-   ▼
-data_v1/prepared/                     FSD50K 噪声 / LibriSpeech 语音 / SLR28 RIR
-   │          ├── noise/{training,validation,testing}/
-   │          ├── speech/{training,validation,testing}/
-   │          ├── rirs/
-   │          └── manifest.{csv,json}, ATTRIBUTION.md, excluded_fsd.csv, sources/
-   │
-   │  cell 7     每个 split 一个增广器（背景池 = 同 split 的 noise/）
-   │  cell 8     单条试听
-   ▼
-   ├─ cell 9   正样本 → features_v1/positive_hey_kamana/{split}/wakeword_mmap
-   └─ cell 10  负样本 → features_v1/negative/{speech,noise}/{split}/negative_mmap
-                ambient  → features_v1/negative/ambient/{validation,testing}_ambient/
-   │
-   │  cell 11    yaml：sampling_weight / penalty_weight / truncation_strategy
-   ▼
-   cell 12    训练：batch 按权重随机抽，validation 全量枚举
+```text
+设置路径与环境 → Clean 100 试听、生成唤醒词与 hey hi
+  → 准备许可音频和 CHiME-6 → 生成正样本、负样本和 ambient 特征
+  → 写训练配置 → 训练、选择权重、转换并测试量化流式模型
+  → hey hi 独立测试 → CHiME-6 独立测试 → 打包模型与来源记录
 ```
 
-## 1. 正样本：TTS 生成
+## 1. 路径与依赖（cell 1–4）
 
-- cell 3：`target_word = 'hˈeɪ kɑmˈɑnɑ'`，Piper `en_US-libritts_r-medium`，**音素输入**，先只生成 1 条人工试听。
-- cell 4：同一命令改为 `--max-samples 1000`，落到 `generated_samples/hey_kamana/`。
-- 这个目录**只有一个类别**，没有负样本；负样本全部来自阶段 2。
+顶部集中设置仓库、数据、模型和输出路径。默认唤醒词为 `hi_fondcircle`，音素为 `hˈaɪ fˈɒnd sˈɜːkəl`；困难负样本为 `hey hi`。修改唤醒词、音素或数据版本后，应同步检查样本目录、版本名与配置，并从路径单元格开始运行。
 
-## 2. 负样本与增广音频：下载 + 许可过滤
+Colab 默认仓库位于 `/content/micro-wake-word`；目录不存在时会克隆仓库。依赖单元以 editable 模式安装项目，再安装 `piper-tts==1.3.0`，移除已有 ONNX Runtime CPU/GPU 包并安装 `onnxruntime-gpu[cuda,cudnn]`。接着预加载 CUDA 库并打印可用 provider。若当前会话已导入旧版 ONNX Runtime，安装后需要重启会话。Clean 100 的推理设备日志与 TensorFlow 训练设备分别判断；Colab 需在运行时设置中选择 GPU。
 
-cell 5 调 `prepare_licensed_data("data_v1")`（`microwakeword/audio/licensed_data.py`），约 15 GB 下载、40 GB 磁盘。
+首次准备原始许可数据约需下载 15 GB；notebook 建议至少预留 50 GB 磁盘，并要求系统有 `zip` 命令。CHiME-6 另有下载和空间需求，见第 6 节。
 
-| 输入 | 用途 | 过滤规则 | 落盘 |
-|---|---|---|---|
-| FSD50K eval | 背景噪声（既是训练增广池，也是噪声负样本） | 许可 URL 必须命中 CC0/CC-BY 允许列表，且必须有 uploader 与 title | `noise/<split>/*.wav` |
-| LibriSpeech | 语音负样本 | 只取 `train-clean-100` / `dev-clean` / `test-clean` 的原始 FLAC | `speech/<split>/*.flac` |
-| OpenSLR SLR28 | 房间冲激响应（RIR） | 只取 `simulated_rirs/**/*.wav` | `rirs/`（保留原始相对路径） |
+## 2. 合成正样本与困难负样本（cell 5–9）
 
-**划分方式（关键）**
+`load_clean100()` 下载或校验 Clean 100 模型及配置，先生成一条试听。正样本使用三档语速 `fast`、`normal`、`slow`，每档生成 1,000 条，共 3,000 条，保存于 `generated_samples/hi_fondcircle/clean100_v1_three_speeds/`，并记录 `generation.json`。生成使用不同的说话人和合成参数；重跑会校验并复用匹配的结果。
 
-- FSD50K 没有用官方 split，而是 `licensed_data.py:101-104` 对 **uploader** 做 `sha256 % 10` 分桶：0→validation、1→testing、其余→training。同一 uploader 的所有片段被锁在同一个 split，避免同源泄漏。
-- LibriSpeech 直接沿用上游 subset（`licensed_data.py:35-39`），不再二次切分。
-- RIR **不划分**，三个 split 共用同一份。
+`hey hi` 使用同一个模型，每档生成 1,000 条，按每档 800/100/100 划为 training、validation、testing，默认保存在 `generated_datasets/hey_hi_negative_clean100_v1/raw/`。随后 `prepare_hard_negative_features()` 按已有划分导出特征到 `features_v1/negative/hey_hi_clean100_v1/`，并验证来源与特征以支持复用。它使用 204 帧上下文；修改音素时，应按 notebook 注释更新数据版本，避免复用旧缓存。
 
-**产物**：`manifest.csv` / `manifest.json`（每文件一行：上游路径、源 URL、数据集版本、作者、标题、精确许可 URL、split、修改说明、SHA-256），`ATTRIBUTION.md`，`excluded_fsd.csv`（被拒片段及原因），`sources/`（原始元数据与许可文本快照）。重跑会校验哈希，拒绝被修改或多余的文件。
+## 3. 许可音频准备（cell 10–11）
 
-`train-result/` 里的实测统计（`manifest.csv`，102,265 行）：
+可选的 Drive 单元把预先下载的 8 个压缩包复制到 `data_v1/downloads/`，并检查有官方 MD5 的新复制文件；也可跳过该单元，由 `prepare_licensed_data()` 下载。准备过程提取并校验音频及来源记录：
 
-| 目录 | training | validation | testing | 合计 |
-|---|---|---|---|---|
-| `noise/`（FSD50K） | 6,975 | 628 | 800 | 8,403 |
-| `speech/`（LibriSpeech） | 28,539 | 2,703 | 2,620 | 33,862 |
-| `rirs/` | 60,000（三集合共用） | — | — | 60,000 |
-
-## 3. 增广器：每个 split 独立的背景池
-
-cell 7。`clips` 用 `Clips(...)` 加载 1000 条正样本：
-
-```python
-Clips(input_directory='generated_samples/hey_kamana',
-      file_pattern='*.wav',
-      max_clip_duration_s=None,
-      remove_silence=False,
-      random_split_seed=10,
-      split_count=0.1)
-```
-
-`augmenters` 是 `{split: Augmentation}` 的字典，三个 split 只是**背景噪声池不同**（`data_root/noise/<split>`），RIR 池共享：
-
-| 参数 | 值 | 作用 |
+| 来源 | 用途 | 划分 |
 |---|---|---|
-| `augmentation_duration_s` | 3.2 | 输出固定 3.2 s：过长裁掉开头，过短在开头补零 |
-| `min_jitter_s` / `max_jitter_s` | 0.195 / 0.205 | 正样本结束位置相对音频尾部的抖动 |
-| `AddBackgroundNoise` | 0.75 | 从**同 split** 的背景池抽噪声 |
-| `RIR` | 0.5 | 混响 |
-| `Gain` | 1.0 | 每条都做 |
-| `SevenBandParametricEQ` / `TanhDistortion` / `PitchShift` / `BandStopFilter` / `AddColorNoise` | 各 0.1 | 轻量音色扰动 |
-| `background_min_snr_db` / `max_snr_db` | -5 / 10 | 信噪比范围 |
+| FSD50K eval | 噪声负样本和正样本背景增广 | 按 uploader 哈希分桶，避免同一 uploader 跨集合；只保留符合代码许可及元数据要求的片段 |
+| LibriSpeech train-clean-100、dev-clean、test-clean | 语音负样本 | 分别对应 training、validation、testing |
+| OpenSLR SLR28 simulated RIR | 混响增广 | 三个集合共用 |
 
-cell 8 抽一条随机片段试听，用来确认增广没有把目标词吃掉。
+结果位于 `data_v1/prepared/`，包括 `noise/`、`speech/`、`rirs/`、`manifest.json`、`manifest.csv`、`ATTRIBUTION.md`、排除记录和来源快照。重跑会检查已准备数据的完整性。来源和许可记录不等于已经完成产品依赖审计或真实设备测试。
 
-## 4. 正样本特征：频谱 + 切分 + 重复
+## 4. 正样本增广和特征（cell 12–14）
 
-cell 9，`SpectrogramGeneration(clips=clips, augmenter=augmenters[split], slide_frames=..., step_ms=10)`，逐 split 写入 `positive_hey_kamana/<split>/wakeword_mmap`。
+`Clips` 从三档语速目录加载 WAV，以 `split_count=0.1` 划出约 80% training、10% validation、10% testing。代码对第一次划分设置 seed 10，第二次将留出集合分半时没有显式传 seed，因此不能据此保证每次验证与测试成员完全相同。
 
-| split | `repeat`（片段重复次数） | `slide_frames` | 说明 |
-|---|---|---|---|
-| training | 2 | 10 | 每段频谱产出 10 个错位 1 帧的窗口，模拟流式推理 |
-| validation | 1 | 10 | 同上，但不重复 |
-| testing | 1 | **1** | 真流式，不做人工重复 |
+每个 split 使用对应的 `noise/<split>` 作为背景池，RIR 共用。增广输出为 3.2 秒，背景噪声概率 0.75、RIR 0.5、Gain 1.0，其他音色扰动各为 0.1，背景信噪比范围为 -5 到 10 dB。试听单元生成并播放 `augmented_clip.wav`，可用于检查目标词是否清晰。
 
-**切分比例**：`clips.py:146-152`
+特征步长为 10 ms，输出到 `features_v1/positive_hi_fondcircle_clean100_v1_three_speeds/<split>/wakeword_mmap`。training 的 `repeat=2`、`slide_frames=10`；validation 为 1 和 10；testing 为 1 和 1。testing 使用流式模型，不做人工滑窗重复。
 
-```python
-train_testvalid = audio_dataset.train_test_split(test_size=2 * split_count, seed=10)  # 20% 留出
-test_valid     = train_testvalid["test"].train_test_split(test_size=0.5)              # 留出部分对半
-```
+## 5. 普通负样本与 ambient 特征（cell 15）
 
-即 1000 条 → **800 / 100 / 100（8 : 1 : 1）**；训练集再 `repeat=2`，按样本计有效比例 **88.9 : 5.6 : 5.6**。第二次对半没有传 `seed`，所以“哪条进 validation、哪条进 test”每次运行可能不同，但比例恒为 10/10。
+语音和噪声保持准备阶段的划分，短分类负样本重复至至少 6 秒，再按 5 秒切分频谱，写入 `features_v1/negative/{speech,noise}/<split>/negative_mmap`。
 
-## 5. 负样本特征：重复到 6 s，切 5 s 块
+validation 和 testing 额外生成 ambient 特征：只选满足最短时长条件的原始长片段，不做重复或 5 秒切块，写入 `features_v1/negative/ambient/{validation_ambient,testing_ambient}/`。它们只用于评估。`features_v1/feature_sources.json` 记录许可音频清单、正样本生成记录、增广来源及困难负样本信息。
 
-cell 10，对 `speech` 和 `noise` 两个语料 × 三个 split 各建一个 mmap：
+## 6. CHiME-6 远场评估集（cell 16–17）
+
+CHiME-6 提供真实家庭远场录音，只进入 ambient 验证和测试，不参与训练采样。代码优先复用已校验的 `chime6_v1/prepared/`，其次从 `data_v1/downloads` 或可选 Drive 目录恢复 `chime6_v1.zip`／已解压数据，最后才从 OpenSLR 下载。Notebook 注释给出的下载量约 11.9 GB、峰值磁盘约 12 GB。
+
+默认将官方 dev 映射到 `validation_ambient`、eval 映射到 `testing_ambient`，notebook 标注时长分别约 4.46 小时和 15.62 小时。准备过程选取参考阵列的 CH1、切成最长约 10 分钟的连续片段；特征生成保持这些片段完整，不做增广、重复或随机切块。特征和来源记录位于 `features_v1/negative/ambient_chime6/`，相同输入的已校验特征可复用。
+
+训练时 validation ambient 会整体载入，notebook 估计 CHiME-6 特征约占 1.2 GB，后续验证切片还会增加内存占用。内存不足时，可把准备调用改为：
 
 ```python
-Clips(input_directory=..., file_pattern='*.flac'|'*.wav',
-      repeat_clip_min_duration_s=6)          # 短片段重复到 >= 6 s
-SpectrogramGeneration(clips=..., step_ms=10, split_spectrogram_duration_s=5)
+chime6_lineage = prepare_ambient_features(
+    chime6_prepared_dir, chime6_features_dir, splits=("testing",)
+)
 ```
 
-- 5 s 块 → 约 500 帧（10 ms 步长），块之间不重叠；前 20 帧会被丢弃（`spectrograms.py:87-96`）。
-- 负样本**不做音频增广**，只有时长规整。
-- 每个 split 目录整体属于该 split，**没有再次随机切分**。
+这会重建该 CHiME-6 特征集合，只保留 testing；训练期 ambient 验证将使用原有语音和噪声数据，后续 CHiME-6 独立报告也只包含 testing。
 
-**ambient（ambient 只用于评估）**：同一 cell 内 `if split != "training"` 额外生成，取**原始片段 ≥ 6 s**、`repeat_clip_min_duration_s` 不生效、`split_spectrogram_duration_s=None`（整段保留），落到 `negative/ambient/{validation_ambient,testing_ambient}`。目的是模拟真实房间的长录音，用来估 FAPH，而非训练。
+## 7. 配置与训练（cell 18–19）
 
-## 6. 训练配置：权重决定 batch 组成
+配置写入 `training_parameters_hi_fondcircle_clean100_v1_hey_hi.yaml`。采样权重决定训练 batch 的来源；ambient 不参与训练采样：
 
-cell 11 写 `training_parameters_hey_kamana.yaml`：
+| 来源 | sampling_weight | truth | 截取方式 |
+|---|---:|---|---|
+| 唤醒词正样本 | 2 | 正 | `truncate_start` |
+| LibriSpeech 语音 | 10 | 负 | `random` |
+| FSD50K 噪声 | 5 | 负 | `random` |
+| hey hi 困难负样本 | 2 | 负 | `truncate_start` |
+| 原有 ambient、CHiME-6 ambient | 各 0 | 负 | `split` |
 
-| features_dir | sampling_weight | penalty_weight | truth | truncation_strategy |
-|---|---|---|---|---|
-| `positive_hey_kamana` | 2.0 | 1.0 | True | `truncate_start` |
-| `negative/speech` | 10.0 | 1.0 | False | `random` |
-| `negative/noise` | 5.0 | 1.0 | False | `random` |
-| `negative/ambient` | 0.0 | 1.0 | False | `split` |
+非 ambient 权重总和为 19，训练时按权重抽取，约为 10.5% 正样本、52.6% 语音、26.3% 噪声、10.5% hey hi；实际 batch 会随机波动。`penalty_weight` 均为 1，正负类别权重分别为 1 和 20。主要参数为 10,000 steps、batch size 128、学习率 0.001、每 500 steps 验证一次、音频窗口 1,500 ms，SpecAugment 关闭。
 
-其余关键项：`window_step_ms=10`、`clip_duration_ms=1500`、`batch_size=128`、`training_steps=[10000]`、`learning_rates=[0.001]`、`positive_class_weight=[1]`、`negative_class_weight=[20]`、`eval_step_interval=500`、SpecAugment 全部为 0。
+当前 mixednet 的 stride 为 3、卷积上下文丢弃 154 帧；结合 10 ms 步长，配置检查得到输入上下文 204 帧。修改模型结构或窗口长度时，需同步检查 `hey_hi_context_frames` 并重新准备相应特征。
 
-**训练窗口长度是算出来的**（`model_train_eval.py:56-89` + cell 12 的 mixednet 参数）：`clip_duration_ms=1500`、`stride=3`、first conv k=5、mixconv `[5],[7,11],[9,15],[23]` → `spectrogram_length = 50 + 154 = 204` 帧 ≈ **2.04 s**。正样本 3.2 s（320 帧）按 `truncate_start` 保留尾部，负样本 5 s 按 `random` 随机截取 204 帧。
+训练期间使用普通 validation 及 `validation_ambient` 计算指标；CHiME-6 validation 默认参与 ambient 汇总。当前设置 `minimization_metric=None`，根据 `average_viable_recall` 选择最佳权重，故加入 CHiME-6 可能改变最佳模型的选择。训练命令启用 checkpoint 恢复，训练完成后使用 `best_weights` 转换并测试**量化流式 TFLite**；其他模型测试开关当前关闭。`--train 0` 可只转换和测试已有最佳权重。
 
-## 7. 训练/验证时的取值路径
+## 8. 测试与结果（cell 19–21）
 
-`microwakeword/data.py` 里同一个函数按 mode 分叉：
+- **常规流式测试**：使用 `testing` 和合并的 `testing_ambient` 计算不同阈值的误拒率及每小时误唤醒率（FAPH）。默认 ambient 汇总包含原有语音、噪声与 CHiME-6，因此与未加入 CHiME-6 时的汇总数字不能直接比较。结果在训练目录的 `tflite_stream_state_internal_quant/tflite_streaming_roc.txt`；模型为同目录的 `stream_state_internal_quant.tflite`。
+- **hey hi 独立测试**：使用量化流式模型逐条统计困难负样本在 0.95、0.98、0.99 阈值下的误触发数和比例，写入 `hey_hi_test_results.json`；此比例不与 ambient 的 FAPH 混算。
+- **CHiME-6 独立测试**：对已准备的 validation 和 testing 分别计算 0.90、0.95、0.98、0.99 阈值下的 FAPH、估计误唤醒次数及触发片段数，并列出峰值最高的片段；结果写入 `chime6_ambient_results.json`。这与汇总测试使用相同的每小时误唤醒计算口径。
 
-**训练 batch —— 按权重随机抽（`data.py:556-566`）**
+合成正样本的测试和远场录音评估不能代替真实用户、真实设备和目标部署环境中的测试。
 
-```python
-random.choices(providers_with_training_dir, weights=sampling_weight, k=batch_size)
-```
+## 9. 打包与复用（cell 22）
 
-- 每个 step 抽 128 个来源 → 约 **12% 正样本 / 59% 语音负 / 29% 噪声负**。
-- ambient 没有 `training/` 目录，`get_mode_size("training")==0`，被过滤掉；`sampling_weight: 0.0` 是第二重保险。
-- 抽到后按需 `spec_augment`（本 notebook 全关）。
+最后生成 `hi_fondcircle_clean100_v1_hey_hi_run.tar.gz`，位于仓库父目录。归档包含训练目录中的模型和报告、训练 YAML、特征来源记录、正样本与 hey hi 的 `generation.json`，以及许可音频和 CHiME-6 的清单、归属和来源文件；不包含完整原始音频与特征集。
 
-**validation / testing —— 全量枚举（`data.py:540-545, 575-596`）**
-
-- 不做加权采样，也没有“随机抽取子集”：遍历**所有** provider 的 `validation/` 目录，把频谱全部拼起来，只 `np.random.shuffle` 打乱顺序。
-- 因此验证集 = 正样本 validation + 语音 validation + 噪声 validation + `validation_ambient` 全量。
-- ambient 频谱用 `truncation_strategy="split"`，按 200 ms 步进切成 1.5 s 窗口，一条长录音变多个样本。
-- `train.py:75-114`：`validation` 指标与 `validation_ambient` 合并累计，只有 FAPH 的分母用 ambient 时长。
-
-目录名的硬约束（`data.py:163-207`，`**/*_mmap/` 递归 glob）：
-
-```
-training/  validation/  testing/  validation_ambient/  testing_ambient/
-```
-
-缺哪个就只是少一组，ambient 目录只有后两个是正常的。
-
-## 8. 划分比例汇总
-
-| 来源 | train | validation | test | 依据 |
-|---|---|---|---|---|
-| 正样本（TTS hey_kamana） | 800 条（×2 重复） | 100 | 100 | `split_count=0.1`，seed=10 |
-| 语音负样本（LibriSpeech） | 28,539 | 2,703 | 2,620 = **84.3 : 8.0 : 7.7** | 上游 subset；按时长约 90 : 5 : 5 |
-| 噪声负样本（FSD50K） | 6,975 | 628 | 800 = **83.0 : 7.5 : 9.5** | uploader 哈希分桶，期望 80/10/10 |
-| RIR | — | — | — | 三集合共享，不参与划分 |
-| ambient | 不生成 | 有 | 有 | 仅评估，`sampling_weight=0` |
-
-对外表述时注意：正样本是 8:1:1，负样本实测约 84:8:8，两者**不是同一个比例**，也没有一个全局的 train/val/test 比例。
-
-## 9. 已知限制与注意点
-
-1. **同源泄漏只在作者维度被挡住**：FSD50K 按 uploader 分桶能防止同一录音者的片段跨 split，但同一个录音的多个衍生文件（例如 `rain.wav`、`rain_1.mp3` 来自不同作者）无法识别。
-2. **验证/测试不重切**：LibriSpeech 与 FSD50K 的 split 完全由上游/哈希决定，notebook 没有“再随机抽 10% 做验证”这一步，所以调参空间受限。
-3. **两次 shuffle 无固定种子**（`data.py:205`、`596`，以及 `clips.py:150` 的第二次对半）：成员集合固定，但顺序/边界可变，因此两次训练之间的验证指标不会逐位复现。
-4. **正负样本评估方式不对称**：正样本 validation/testing 用 `slide_frames` 模拟流式，负样本不使用；ambient 用长录音切片。三者指标不能直接横向比较。
-5. **特征落盘没有版本号**：换增广参数后必须手动删掉 `features_v1/` 再重建，否则 `RaggedMmap` 会读到旧特征；`feature_sources.json` 只记录音频清单哈希，不记录增广参数哈希。
-6. **`manifest.csv` 里没有时长字段**：条数比例 ≠ 时长比例 ≠ 频谱帧数比例（负样本 5 s 定长切片后，帧数比例才接近条数比例）。
-7. cell 14 用 tar 打包 `trained_models/`、yaml、`feature_sources.json`、manifest/attribution 等，作为实验记录归档；不含音频本体。
+跨会话复用 hey hi 音频时，保留完整 `raw/` 目录及 `generation.json` 并更新顶部路径。更改正样本增广、音频或特征参数时，应检查对应输出和缓存是否需要重建；普通正负样本的来源记录不能替代对增广参数变化的检查。

@@ -47,21 +47,3 @@ SLR28 未公布校验值；其解压文件在读取时由 ZIP CRC 校验兜底�
 - 请保留原始压缩包：`prepared/` 会对照它们做哈希校验，manifest 也记录了其 SHA-256。
   不要把原始 FSD50K 档案当作已清理子集分发——只有 `prepared/noise` 是逐文件核对过
   许可的，凭据是 `ATTRIBUTION.md` 和 `manifest.csv`。
-
-## Colab：默认从 Google Drive 复制
-
-`notebooks/ambient_testing_notebook.ipynb`（以及任何用 `microwakeword.audio.drive_data`
-的入口）不再默认走公网下载，而是先挂载 Drive 并复制已有副本。`DRIVE_ROOT` 默认
-`/content/drive/MyDrive/wake-word`，按下列条目有哪个复制哪个：
-
-| Drive 里的路径 | 复制到（run 目录） | 说明 |
-| --- | --- | --- |
-| `trained_models` | `trained_models` | 训练产物，评测用的 `tflite_stream_state_internal_quant/stream_state_internal_quant.tflite` 就在里面 |
-| `data_v1/downloads` | `data_v1/downloads` | 本文档列出的 8 个压缩包，复制后核对官方 MD5 |
-| `data_v1/prepared` | `data_v1/prepared` | 已挑选好的音频；`prepare_licensed_data` 会逐文件校验 |
-| `chime6_v1/prepared` | `chime6_v1/prepared` | 已解压的 CHiME-6 |
-| `chime6_v1.zip` | `data_v1/downloads/chime6_v1.zip` | `ensure_chime6` 认这个位置 |
-| `features_v1/negative/ambient*` | 同路径 | 已建好的 ambient 特征，可直接复用 |
-
-复制是幂等的：大小一致的文件直接跳过，字节先写 `.part` 再改名，中断不会留下半截文件；
-MD5 不符的压缩包会被删除并报错。只有 `data_v1/prepared` 不存在而压缩包齐全时才在本地解压。

@@ -205,7 +205,7 @@ def audio_duration(path):
 
 def open_tracks(source, max_tracks=None):
     """Return something indexable by track: a mmap path, AudioTracks, or a sequence."""
-    tracks = RaggedMmap(str(source)) if isinstance(source, (str, Path)) else source
+    tracks = open_mmap(source) if isinstance(source, (str, Path)) else source
     if not hasattr(tracks, "__len__") or not hasattr(tracks, "__getitem__"):
         raise TypeError(f"Expected a mmap path, AudioTracks or tracks, got {type(source)}")
     if max_tracks is not None:
@@ -215,6 +215,26 @@ def open_tracks(source, max_tracks=None):
     if not len(tracks):
         raise ValueError(f"No tracks in {source}")
     return tracks
+
+
+def open_mmap(path):
+    """Open a feature set, refusing to create one from a typo.
+
+    `RaggedMmap` creates its directory when it is missing, so a mistyped or missing
+    path would silently turn into an empty set (and a confusing mkdir error when the
+    parents are missing too). Check first instead.
+    """
+    path = Path(path).expanduser()
+    if not path.is_dir():
+        raise FileNotFoundError(
+            f"Feature set {path} is missing. Build it with "
+            "microwakeword.audio.ambient_features, copy it from the training run "
+            "(features_v1/<pool>/<mode>/*_mmap), or evaluate audio files directly with "
+            "POSITIVE_AUDIO / AMBIENT_AUDIO."
+        )
+    if not any(path.iterdir()):
+        raise ValueError(f"Feature set {path} is empty; rebuild it instead of evaluating it")
+    return RaggedMmap(str(path))
 
 
 def describe_source(tracks):

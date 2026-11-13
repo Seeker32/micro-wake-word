@@ -193,6 +193,22 @@ class EvaluateTracksTests(unittest.TestCase):
         hours = ambient_eval.track_hours(probabilities, stride=3, step_s=0.01)
         self.assertAlmostEqual(hours, (3600 * 100 - 4) * 3 * 0.01 / 3600, places=9)
 
+    def test_missing_feature_set_is_reported_and_not_created(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "features/testing/wakeword_mmap"
+            with self.assertRaises(FileNotFoundError) as caught:
+                ambient_eval.open_tracks(missing)
+            self.assertIn(str(missing), str(caught.exception))
+            self.assertFalse(missing.exists())  # RaggedMmap must not mkdir a typo
+
+    def test_empty_feature_set_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            empty = Path(directory) / "wakeword_mmap"
+            empty.mkdir()
+            with self.assertRaises(ValueError) as caught:
+                ambient_eval.open_tracks(empty)
+        self.assertIn("empty", str(caught.exception))
+
     def test_max_tracks_limits_the_run(self):
         with tempfile.TemporaryDirectory() as directory:
             folder = write_mmap(Path(directory) / "testing_ambient/noise_mmap", [10, 10, 10])

@@ -13,7 +13,7 @@
 
 ## 1. 路径与依赖（cell 1–4）
 
-顶部集中设置仓库、数据、模型和输出路径。默认唤醒词为 `hi_fondcircle`，音素为 `hˈaɪ fˈɒnd sˈɜːkəl`；困难负样本为 `hey hi`。修改唤醒词、音素或数据版本后，应同步检查样本目录、版本名与配置，并从路径单元格开始运行。
+顶部集中设置仓库、数据、模型和输出路径。默认唤醒词为 `Hi Circle`（`hi_circle`），Piper 音素为 `hˈaɪ sˈɜːkəl`；困难负样本为 `hey hi`。修改唤醒词时同步更新名称、Kokoro 文本和 Piper 音素，并从路径单元格开始运行。
 
 Colab 默认仓库位于 `/content/micro-wake-word`；目录不存在时会克隆仓库。依赖单元以 editable 模式安装项目，再安装 `piper-tts==1.3.0`，移除已有 ONNX Runtime CPU/GPU 包并安装 `onnxruntime-gpu[cuda,cudnn]`。接着预加载 CUDA 库并打印可用 provider。若当前会话已导入旧版 ONNX Runtime，安装后需要重启会话。Clean 100 的推理设备日志与 TensorFlow 训练设备分别判断；Colab 需在运行时设置中选择 GPU。
 
@@ -21,9 +21,25 @@ Colab 默认仓库位于 `/content/micro-wake-word`；目录不存在时会克�
 
 ## 2. 合成正样本与困难负样本（cell 5–9）
 
-`load_clean100()` 下载或校验 Clean 100 模型及配置，先生成一条试听。正样本使用三档语速 `fast`、`normal`、`slow`，每档生成 1,000 条，共 3,000 条，保存于 `generated_samples/hi_fondcircle/clean100_v1_three_speeds/`，并记录 `generation.json`。生成使用不同的说话人和合成参数；重跑会校验并复用匹配的结果。
+`load_clean100()` 下载或校验 Clean 100 模型及配置，先生成一条试听。正样本使用三档语速 `fast`、`normal`、`slow`，每档生成 1,000 条，共 3,000 条，保存于 `generated_samples/hi_circle/clean100_v1_three_speeds/`，并记录 `generation.json`。生成使用不同的说话人和合成参数；重跑会校验并复用匹配的结果。
 
 `hey hi` 使用同一个模型，每档生成 1,000 条，按每档 800/100/100 划为 training、validation、testing，默认保存在 `generated_datasets/hey_hi_negative_clean100_v1/raw/`。随后 `prepare_hard_negative_features()` 按已有划分导出特征到 `features_v1/negative/hey_hi_clean100_v1/`，并验证来源与特征以支持复用。它使用 204 帧上下文；修改音素时，应按 notebook 注释更新数据版本，避免复用旧缓存。
+
+### 试听并接入 Kokoro
+
+在顶部设 `USE_KOKORO = True`，运行到 cell 5。音频目录不存在时，cell 5 首次用 `uv` 在 `data_v1/kokoro_venv` 创建独立的 Python 3.12 虚拟环境，安装 Kokoro 和 CPU 推理依赖，再用该环境生成 WAV。已有音频批次直接校验和复用，不安装 Kokoro，也不覆盖文件。默认只训练 Piper；关闭 Kokoro 时仍可试听现成音频。
+
+在 Colab 想跨会话保留音频，可在顶部这样设置输出位置。cell 5 会先请求挂载 Drive，虚拟环境仍留在运行时本地磁盘。
+
+```python
+USE_KOKORO = True
+kokoro_dataset_name = "kokoro_v1_wide_speeds_r2"
+kokoro_audio_dir = Path("/content/drive/MyDrive/wake-word") / kokoro_dataset_name
+```
+
+生成器用固定的 [Kokoro-82M v1.0 权重、配置及音色](https://huggingface.co/hexgrad/Kokoro-82M/tree/f3ff3571791e39611d31c381e3a41a3af07b4987)，尝试 15 款音色、5 档语速：**0.74×、0.86×、1.0×、1.25×、1.55×**。新批次移除 `am_fenrir`；合成 `Hi Circle` 时，`am_puck` 的 1.55× 会漏读 `Hi`，所以只用其余四档。新版另存到 `kokoro_v1_wide_speeds_r2`，不覆盖旧批次。通过格式、时长与去重检查的候选写入 `training/*.wav`；`generation.json` 记录音色、发音、裁剪和来源。启用前试听候选，遇到缺音或错读，同时删除 WAV 和清单里的对应条目。
+
+cell 5 保留 Piper 试听，Kokoro 按美式、英式男女声分别从慢到快连播。试听确认后继续运行：Kokoro 单独导出训练 mmap，权重为 `0.2`，Piper 改为 `1.8`；验证、测试、量化校准的数据来源和负样本保持不变。做对照时先跑 Piper-only 并保留三份正样本 mmap，混合组会复用它们。混合组使用独立的训练、配置和归档路径；更换已训练过的音频批次时，也要改 `kokoro_dataset_name`，避免复用旧权重。
 
 ## 3. 许可音频准备（cell 10–11）
 
@@ -43,7 +59,7 @@ Colab 默认仓库位于 `/content/micro-wake-word`；目录不存在时会克�
 
 每个 split 使用对应的 `noise/<split>` 作为背景池，RIR 共用。增广输出为 3.2 秒，背景噪声概率 0.75、RIR 0.5、Gain 1.0，其他音色扰动各为 0.1，背景信噪比范围为 -5 到 10 dB。试听单元生成并播放 `augmented_clip.wav`，可用于检查目标词是否清晰。
 
-特征步长为 10 ms，输出到 `features_v1/positive_hi_fondcircle_clean100_v1_three_speeds/<split>/wakeword_mmap`。training 的 `repeat=2`、`slide_frames=10`；validation 为 1 和 10；testing 为 1 和 1。testing 使用流式模型，不做人工滑窗重复。
+特征步长为 10 ms，输出到 `features_v1/positive_hi_circle_clean100_v1_three_speeds/<split>/wakeword_mmap`。training 的 `repeat=2`、`slide_frames=10`；validation 为 1 和 10；testing 为 1 和 1。testing 使用流式模型，不做人工滑窗重复。
 
 ## 5. 普通负样本与 ambient 特征（cell 15）
 
@@ -69,7 +85,7 @@ chime6_lineage = prepare_ambient_features(
 
 ## 7. 配置与训练（cell 18–19）
 
-配置写入 `training_parameters_hi_fondcircle_clean100_v1_hey_hi.yaml`。采样权重决定训练 batch 的来源；ambient 不参与训练采样：
+配置写入 `training_parameters_hi_circle_clean100_v1_hey_hi.yaml`。采样权重决定训练 batch 的来源；ambient 不参与训练采样：
 
 | 来源 | sampling_weight | truth | 截取方式 |
 |---|---:|---|---|
@@ -97,7 +113,7 @@ chime6_lineage = prepare_ambient_features(
 
 ## 9. 打包与复用（cell 23）
 
-最后生成 `hi_fondcircle_clean100_v1_hey_hi_run.tar.gz`，位于仓库父目录。归档包含训练目录中的模型和报告、训练 YAML、特征来源记录、正样本与 hey hi 的 `generation.json`，以及许可音频和 CHiME-6 的清单、归属和来源文件；不包含完整原始音频与特征集。
+默认生成 `hi_circle_clean100_v1_hey_hi_run.tar.gz`，位于仓库父目录。归档包含训练目录中的模型和报告、训练 YAML、特征来源记录、正样本与 hey hi 的 `generation.json`，以及许可音频和 CHiME-6 的清单、归属和来源文件。启用 Kokoro 时，归档名会带上数据版本（默认 `_kokoro_v1_wide_speeds_r2`），并收录 Kokoro 的 `generation.json`；归档不包含完整原始音频与特征集。
 
 只复评已有权重时，确保训练目录保留原 `training_config.yaml` 和权重，且当前路径下有配套特征。完成路径、依赖和配置单元（1、2、18）后，将 cell 19 的 `RUN_TRAINING` 设为 `False`，继续执行选型和测试。
 

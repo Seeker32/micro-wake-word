@@ -13,7 +13,7 @@
 
 ## 1. 路径与依赖（cell 1–4）
 
-顶部集中设置仓库、数据、模型和输出路径。默认唤醒词为 `Hi Circle`（`hi_circle`），Piper 音素为 `hˈaɪ sˈɜːkəl`；困难负样本为 `hey hi`。修改唤醒词时同步更新名称、Kokoro 文本和 Piper 音素，并从路径单元格开始运行。
+顶部集中设置仓库、数据、模型和输出路径。默认唤醒词为 `Hi Circle`（`hi_circle`），Piper 音素为 `hˈaɪ sˈɜːkəl`；困难负样本为 `hey hi`。修改唤醒词时同步更新名称和 Piper 音素，并从路径单元格开始运行。
 
 Colab 默认仓库位于 `/content/micro-wake-word`；目录不存在时会克隆仓库。依赖单元以 editable 模式安装项目，再安装 `piper-tts==1.3.0`，移除已有 ONNX Runtime CPU/GPU 包并安装 `onnxruntime-gpu[cuda,cudnn]`。接着预加载 CUDA 库并打印可用 provider。若当前会话已导入旧版 ONNX Runtime，安装后需要重启会话。Clean 100 的推理设备日志与 TensorFlow 训练设备分别判断；Colab 需在运行时设置中选择 GPU。
 
@@ -21,25 +21,9 @@ Colab 默认仓库位于 `/content/micro-wake-word`；目录不存在时会克�
 
 ## 2. 合成正样本与困难负样本（cell 5–9）
 
-`load_clean100()` 下载或校验 Clean 100 模型及配置，先生成一条试听。正样本使用三档语速 `fast`、`normal`、`slow`，每档生成 1,000 条，共 3,000 条，保存于 `generated_samples/hi_circle/clean100_v1_three_speeds/`，并记录 `generation.json`。生成使用不同的说话人和合成参数；重跑会校验并复用匹配的结果。
+`load_clean100()` 下载或校验 Clean 100 模型及配置，先生成快、正常、慢三档试听：三档使用同一位说话人和同一噪声档，输出 `preview_dir/{fast,normal,slow}.wav`，并按 fast → normal → slow 拼成 `preview_dir/three_speeds.wav` 连播。正样本使用三档语速 `fast`、`normal`、`slow`，每档生成 1,000 条，共 3,000 条，保存于 `generated_samples/hi_circle/clean100_v1_three_speeds/`，并记录 `generation.json`。生成使用不同的说话人和合成参数；重跑会校验并复用匹配的结果。
 
 `hey hi` 使用同一个模型，每档生成 1,000 条，按每档 800/100/100 划为 training、validation、testing，默认保存在 `generated_datasets/hey_hi_negative_clean100_v1/raw/`。随后 `prepare_hard_negative_features()` 按已有划分导出特征到 `features_v1/negative/hey_hi_clean100_v1/`，并验证来源与特征以支持复用。它使用 204 帧上下文；修改音素时，应按 notebook 注释更新数据版本，避免复用旧缓存。
-
-### 试听并接入 Kokoro
-
-在顶部设 `USE_KOKORO = True`，运行到 cell 5。音频目录不存在时，cell 5 首次用 `uv` 在 `data_v1/kokoro_venv` 创建独立的 Python 3.12 虚拟环境，安装 Kokoro 和 CPU 推理依赖，再用该环境生成 WAV。已有音频批次直接校验和复用，不安装 Kokoro，也不覆盖文件。默认只训练 Piper；关闭 Kokoro 时仍可试听现成音频。
-
-在 Colab 想跨会话保留音频，可在顶部这样设置输出位置。cell 5 会先请求挂载 Drive，虚拟环境仍留在运行时本地磁盘。
-
-```python
-USE_KOKORO = True
-kokoro_dataset_name = "kokoro_v1_wide_speeds_r2"
-kokoro_audio_dir = Path("/content/drive/MyDrive/wake-word") / kokoro_dataset_name
-```
-
-生成器用固定的 [Kokoro-82M v1.0 权重、配置及音色](https://huggingface.co/hexgrad/Kokoro-82M/tree/f3ff3571791e39611d31c381e3a41a3af07b4987)，尝试 15 款音色、5 档语速：**0.74×、0.86×、1.0×、1.25×、1.55×**。新批次移除 `am_fenrir`；合成 `Hi Circle` 时，`am_puck` 的 1.55× 会漏读 `Hi`，所以只用其余四档。新版另存到 `kokoro_v1_wide_speeds_r2`，不覆盖旧批次。通过格式、时长与去重检查的候选写入 `training/*.wav`；`generation.json` 记录音色、发音、裁剪和来源。启用前试听候选，遇到缺音或错读，同时删除 WAV 和清单里的对应条目。
-
-cell 5 保留 Piper 试听，Kokoro 按美式、英式男女声分别从慢到快连播。试听确认后继续运行：Kokoro 单独导出训练 mmap，权重为 `0.2`，Piper 改为 `1.8`；验证、测试、量化校准的数据来源和负样本保持不变。做对照时先跑 Piper-only 并保留三份正样本 mmap，混合组会复用它们。混合组使用独立的训练、配置和归档路径；更换已训练过的音频批次时，也要改 `kokoro_dataset_name`，避免复用旧权重。
 
 ## 3. 许可音频准备（cell 10–11）
 
@@ -103,9 +87,9 @@ chime6_lineage = prepare_ambient_features(
 
 ## 8. 用量化流式验证选型，再验收（cell 20–22）
 
-- **选权重**：转换非流式最佳、首个、最接近最后一步 75% 的阶段和最后一份快照，去掉重复权重。每个候选共用 500 条训练侧校准特征；从 validation 的错位窗恢复每条正样本，只计一次。合并原有语音、噪声和已准备的 CHiME-6 validation 背景数据，在 `STREAMING_FAPH_BUDGET`（默认 0.1 次/小时）内选漏唤醒率最低的候选。背景时长不足以允许 1 次误唤醒时，排名实际比较的是零观测误唤醒工作点。
-- **锁定阈值测试**：只让入选模型进入 testing，沿用验证阈值，报告漏唤醒、每小时误唤醒和 `hey hi` 误触发数。排名与测试写入训练目录的 `streaming_checkpoint_selection.json`。入选权重保存为 `best_streaming_weights.weights.h5`；原 `best_weights.weights.h5` 不变。若全部候选都无法在预算内检出正样本，不替换现有模型。
-- **部署文件与诊断曲线**：原有 `tflite_stream_state_internal_quant/stream_state_internal_quant.tflite` 路径现在存放实际入选的 TFLite。同目录的 `tflite_streaming_roc.txt` 仍记录 testing 诊断曲线；它不参与选权重或调阈值。每条录音独立初始化流式状态，误唤醒率按合并背景时长计算。
+- **选权重和阈值**：转换非流式最佳、首个、最接近最后一步 75% 的阶段和最后一份快照，去掉重复权重。每个候选共用 500 条训练侧校准特征；从 validation 的错位窗恢复每条正样本，只计一次。优先在 `STREAMING_FAPH_BUDGET`（默认 0.1 次/小时）内选漏唤醒率最低且能检出正样本的候选。如果预算内没有这样的点，选误唤醒率超出目标最少、有检出能力的点；误唤醒率相同时选漏唤醒更少的点。
+- **锁定阈值测试**：只让验证集选出的模型进入 testing，沿用锁定阈值，报告漏唤醒、每小时误唤醒和 `hey hi` 误触发数。排名与测试写入训练目录的 `streaming_checkpoint_selection.json`。独立测试的误唤醒率达标且检出了正样本，才写入原有导出路径；否则把该模型和入选权重保存到 `streaming_diagnostic/`。原 `best_weights.weights.h5` 不变。
+- **部署文件与诊断曲线**：通过独立测试的 TFLite 位于 `tflite_stream_state_internal_quant/stream_state_internal_quant.tflite`。报告的 `evaluated_tflite` 指向实际测试的文件。同目录的 `tflite_streaming_roc.txt` 记录测试曲线，仅供诊断。每条录音独立初始化流式状态，误唤醒率按合并背景时长计算。
 - **hey hi 独立测试**：使用量化流式模型逐条统计困难负样本在 0.95、0.98、0.99 阈值下的误触发数和比例，写入 `hey_hi_test_results.json`；此比例不与 ambient 的 FAPH 混算。
 - **CHiME-6 独立测试**：只对 testing 计算 0.90、0.95、0.98、0.99 阈值下的 FAPH、估计误唤醒次数及触发片段数，并列出峰值最高的片段；结果写入 `chime6_ambient_results.json`。这与汇总测试使用相同的每小时误唤醒计算口径。
 
@@ -113,7 +97,7 @@ chime6_lineage = prepare_ambient_features(
 
 ## 9. 打包与复用（cell 23）
 
-默认生成 `hi_circle_clean100_v1_hey_hi_run.tar.gz`，位于仓库父目录。归档包含训练目录中的模型和报告、训练 YAML、特征来源记录、正样本与 hey hi 的 `generation.json`，以及许可音频和 CHiME-6 的清单、归属和来源文件。启用 Kokoro 时，归档名会带上数据版本（默认 `_kokoro_v1_wide_speeds_r2`），并收录 Kokoro 的 `generation.json`；归档不包含完整原始音频与特征集。
+默认生成 `hi_circle_clean100_v1_hey_hi_run.tar.gz`，位于仓库父目录。归档包含训练目录中的模型和报告、训练 YAML、特征来源记录、正样本与 hey hi 的 `generation.json`，以及许可音频和 CHiME-6 的清单、归属和来源文件；归档不包含完整原始音频与特征集。
 
 只复评已有权重时，确保训练目录保留原 `training_config.yaml` 和权重，且当前路径下有配套特征。完成路径、依赖和配置单元（1、2、18）后，将 cell 19 的 `RUN_TRAINING` 设为 `False`，继续执行选型和测试。
 

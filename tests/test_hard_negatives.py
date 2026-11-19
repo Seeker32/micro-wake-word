@@ -91,7 +91,6 @@ class HardNegativeTests(unittest.TestCase):
                     "hey_hi_context_frames": 204,
                     "features_dir": root / "features",
                     "chime6_features_dir": root / "features/negative/ambient_chime6",
-                    "USE_KOKORO": False,
                     "positive_dir": root / "features/positive_hey_kamana",
                     "train_dir": root / "trained_models/hey_kamana_hey_hi",
                     "config_path": root / "parameters.yaml",

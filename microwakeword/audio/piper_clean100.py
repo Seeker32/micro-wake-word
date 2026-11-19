@@ -17,6 +17,10 @@ LENGTH_SCALES = {"fast": 0.65, "normal": 1.0, "slow": 1.25}
 NOISE_SCALES = (0.60, 0.667, 0.72, 0.78, 0.83)
 NOISE_W_SCALE = 0.8
 SAMPLES_PER_SPEED = 1000
+# 试听统一用说话人 0 和第一档噪声，只有语速不同，便于对比三档。
+PREVIEW_SPEAKER_ID = 0
+PREVIEW_NOISE_SCALE = NOISE_SCALES[1]
+PREVIEW_GAP_S = 0.3
 
 MODEL_BASE_URL = "https://sfo3.digitaloceanspaces.com/bkmdls"
 MODEL_HASHES = {
@@ -111,9 +115,36 @@ def _write_wav(path, pcm, sample_rate):
 
 def write_clean100_preview(voice, output_path, phonemes):
     """Render the reference speaker and speed used in the C comparison."""
-    pcm = _synthesize_pcm(voice, _phoneme_ids(voice, phonemes), 0, 1.0, 0.667)
+    pcm = _synthesize_pcm(voice, _phoneme_ids(voice, phonemes), PREVIEW_SPEAKER_ID, 1.0,
+                          PREVIEW_NOISE_SCALE)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     _write_wav(output_path, pcm, voice.config.sample_rate)
+
+
+def write_clean100_previews(voice, output_dir, phonemes):
+    """Render one preview per speed plus a single track that plays them in order.
+
+    Writes ``<speed>.wav`` for every speed in ``LENGTH_SCALES`` and
+    ``three_speeds.wav``, which concatenates them with ``PREVIEW_GAP_S`` of
+    silence between clips. Every clip uses the same speaker and noise scale, so
+    only the speaking rate differs. Returns the per-speed paths in order.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    sample_rate = voice.config.sample_rate
+    phoneme_ids = _phoneme_ids(voice, phonemes)
+    paths = {}
+    chunks = []
+    for speed, length_scale in LENGTH_SCALES.items():
+        pcm = _synthesize_pcm(voice, phoneme_ids, PREVIEW_SPEAKER_ID, length_scale,
+                              PREVIEW_NOISE_SCALE)
+        path = output_dir / f"{speed}.wav"
+        _write_wav(path, pcm, sample_rate)
+        paths[speed] = path
+        chunks.append(pcm)
+    silence = b"\0\0" * round(sample_rate * PREVIEW_GAP_S)
+    _write_wav(output_dir / "three_speeds.wav", silence.join(chunks), sample_rate)
+    return paths
 
 
 def prepare_clean100_samples(voice, output_dir, phonemes, *, hard_negative_max_duration_s=None):

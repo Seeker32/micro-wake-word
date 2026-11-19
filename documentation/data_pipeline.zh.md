@@ -85,19 +85,21 @@ chime6_lineage = prepare_ambient_features(
 
 训练期间仍用非流式验证的 `average_viable_recall` 保存 `best_weights.weights.h5`，并按验证间隔保存快照。训练步数和 checkpoint 恢复方式不变，不启用早停。
 
-## 8. 用量化流式验证选型，再验收（cell 20–22）
+## 8. 量化流式评测：记录曲线，按验证集排名（cell 20–22）
 
-- **选权重和阈值**：转换非流式最佳、首个、最接近最后一步 75% 的阶段和最后一份快照，去掉重复权重。每个候选共用 500 条训练侧校准特征；从 validation 的错位窗恢复每条正样本，只计一次。优先在 `STREAMING_FAPH_BUDGET`（默认 0.1 次/小时）内选漏唤醒率最低且能检出正样本的候选。如果预算内没有这样的点，选误唤醒率超出目标最少、有检出能力的点；误唤醒率相同时选漏唤醒更少的点。
-- **锁定阈值测试**：只让验证集选出的模型进入 testing，沿用锁定阈值，报告漏唤醒、每小时误唤醒和 `hey hi` 误触发数。排名与测试写入训练目录的 `streaming_checkpoint_selection.json`。独立测试的误唤醒率达标且检出了正样本，才写入原有导出路径；否则把该模型和入选权重保存到 `streaming_diagnostic/`。原 `best_weights.weights.h5` 不变。
-- **部署文件与诊断曲线**：通过独立测试的 TFLite 位于 `tflite_stream_state_internal_quant/stream_state_internal_quant.tflite`。报告的 `evaluated_tflite` 指向实际测试的文件。同目录的 `tflite_streaming_roc.txt` 记录测试曲线，仅供诊断。每条录音独立初始化流式状态，误唤醒率按合并背景时长计算。
-- **hey hi 独立测试**：使用量化流式模型逐条统计困难负样本在 0.95、0.98、0.99 阈值下的误触发数和比例，写入 `hey_hi_test_results.json`；此比例不与 ambient 的 FAPH 混算。
-- **CHiME-6 独立测试**：只对 testing 计算 0.90、0.95、0.98、0.99 阈值下的 FAPH、估计误唤醒次数及触发片段数，并列出峰值最高的片段；结果写入 `chime6_ambient_results.json`。这与汇总测试使用相同的每小时误唤醒计算口径。
+- **候选**：转换非流式最佳、首份、最接近训练进度 75% 的一份和最后一份快照，去掉重复权重，最多 4 份；训练结构、步数和候选规则不变。
+- **记录整条曲线**：所有候选共用 500 条训练侧校准特征，在同一验证集上各跑一次流式推理；对 `0`–`255 × 5` 共 1,276 个阈值档位记录 checkpoint、阈值、漏唤醒数/正样本数、误唤醒次数/背景小时数、FRR、FAPH。曲线再差、漏掉全部正样本也照常记录，不淘汰候选。
+- **排名**：只按验证集 0–2 次/小时内的漏唤醒阶梯曲线面积排序，越小越好；面积相同优先非流式最佳权重。面积按“每个误唤醒水平下实际可达的最低 FRR”积分，因此零误唤醒但漏掉全部正样本的阈值不会排在前面。
+- **保存**：第一名的量化 TFLite、权重和曲线写入 `train_dir/streaming_evaluation/<UTC 时间戳>/`，含 `stream_state_internal/`、`tflite_stream_state_internal_quant/`、`best_streaming_weights.weights.h5`、`validation_curves.csv`、`testing_curve.csv` 和 `selection.json`。不覆盖旧评测目录、旧部署文件和 `best_weights.weights.h5`。
+- **独立测试只记录**：同一份 TFLite 在 testing 上跑一次并保存整条阈值曲线，结果写入 `selection.json` 的 `winner.testing`；测试成绩不参与排名、不判定通过与否，也不用来反选阈值。每条录音独立初始化流式状态，误唤醒率按合并背景时长计算。
+- **hey hi 独立测试**：使用同一份入选 TFLite 逐条统计困难负样本在 0.95、0.98、0.99 阈值下的误触发数和比例，写入本次评测目录的 `hey_hi_test_results.json`；此比例不与 ambient 的 FAPH 混算。
+- **CHiME-6 独立测试**：只对 testing 计算 0.90、0.95、0.98、0.99 阈值下的 FAPH、估计误唤醒次数及触发片段数，并列出峰值最高的片段；结果写入本次评测目录的 `chime6_ambient_results.json`。这与汇总测试使用相同的每小时误唤醒计算口径。
 
 合成正样本的测试和远场录音评估不能代替真实用户、真实设备和目标部署环境中的测试。
 
 ## 9. 打包与复用（cell 23）
 
-默认生成 `hi_circle_clean100_v1_hey_hi_run.tar.gz`，位于仓库父目录。归档包含训练目录中的模型和报告、训练 YAML、特征来源记录、正样本与 hey hi 的 `generation.json`，以及许可音频和 CHiME-6 的清单、归属和来源文件；归档不包含完整原始音频与特征集。
+默认生成 `hi_circle_clean100_v1_hey_hi_run.tar.gz`，位于仓库父目录。归档包含训练目录中的模型和报告、训练 YAML、特征来源记录、正样本与 hey hi 的 `generation.json`，以及许可音频和 CHiME-6 的清单、归属和来源文件；本次评测目录（入选 TFLite、`selection.json`、验证与测试阈值 CSV）随训练目录一并打包；归档不包含完整原始音频与特征集。
 
 只复评已有权重时，确保训练目录保留原 `training_config.yaml` 和权重，且当前路径下有配套特征。完成路径、依赖和配置单元（1、2、18）后，将 cell 19 的 `RUN_TRAINING` 设为 `False`，继续执行选型和测试。
 

@@ -2,17 +2,21 @@
 
 WSL 训练 notebook（`notebooks/basic_training_notebook_wsl.ipynb`）把数据集目录固定在
 `/mnt/e/data/wake_word`。下列压缩包提前下载到该目录后，数据准备单元会把它们挪进
-`downloads/`，`prepare_licensed_data` 直接复用，免去约 11 GiB 的重新下载。各档案在
-下游流程中的作用详见[许可训练数据](licensed_training_data.md)；本页是原始下载文件的
+`downloads/`，`prepare_licensed_data` 直接复用，免去约 14 GiB 的重新下载。各档案在
+下游流程中的作用详见 [data_pipeline.zh.md](data_pipeline.zh.md) 第 3、6 节；本页是原始下载文件的
 逐一清单。
+
+Colab 版 notebook 用可选的 Drive 单元做同一件事：把下面这 8 个文件放进
+`DRIVE_ARCHIVE_DIR`（默认 `/content/drive/MyDrive/wake-word/data_v1/downloads`），
+单元格会复制到 `data_v1/downloads/` 并校验 MD5，之后的数据准备单元直接跳过下载。
 
 所有 MD5 均来自官方发布页，由 `microwakeword/audio/licensed_data.py` 在下载时强制校验。
 SLR28 未公布校验值；其解压文件在读取时由 ZIP CRC 校验兜底。
 
 ## FSD50K v1.0（Zenodo record 4060432）
 
-背景声增强与环境负样本的来源。只挑选 CC0/CC-BY 许可的 eval 片段；eval 音频是两段式
-分卷 ZIP，读取前必须先用 `zip -s 0` 合并。
+背景声增强与环境负样本的来源。只挑选 CC0/CC-BY 许可的 eval 片段（10,231 条中选 8,403 条）；
+eval 音频是两段式分卷 ZIP，读取前必须先用 `zip -s 0` 合并。
 
 | 文件 | 大小 | MD5 | 内容与用途 |
 | --- | --- | --- | --- |
@@ -39,11 +43,31 @@ SLR28 未公布校验值；其解压文件在读取时由 ZIP CRC 校验兜底�
 | `dev-clean.tar.gz` | 322 MiB | `42e2234ba48799c1f50f24a7926300a1` | 验证集朗读者。`prepared/speech/validation/` 负样本，外加 `validation_ambient` 集（原始 ≥6 s 片段，不做重复拼接）。 |
 | `test-clean.tar.gz` | 331 MiB | `32fa31d27d2e1cad72775fee3f4849a9` | 测试集朗读者。`prepared/speech/testing/` 负样本，外加 `testing_ambient` 集。 |
 
+## OpenSLR SLR150 — CHiME-6（可选）
+
+真实家庭远场 ambient 评估集。这一项**不走 `prepare_licensed_data`**：`chime6.py` 自己流式读取
+`CHiME6_dev.tar.gz` 与 `CHiME6_eval.tar.gz`（合计约 20 GB 流量，峰值缓存约 12.5 GB，
+读到所需阵列即停、缓存用完即弃），train 压缩包（约 97 GB）不需要。SLR150 未公布校验值，
+因此 `prepared/` 由解压后逐文件 SHA-256 的 `manifest.json` 兜底校验。
+
+要在大机器上准备一次、之后在多台机器复用，可以：
+
+1. `python -m microwakeword.audio.chime6 --output-dir chime6_v1` 生成 `chime6_v1/prepared/`；
+2. 把 `prepared/` 打成 `chime6_v1.zip`（成员必须以 `prepared/` 为前缀）；
+3. 把 `chime6_v1.zip`（或已解压的 `chime6_v1/`）放进 `data_v1/downloads` 或 Drive 的同一个
+   下载目录。
+
+`ensure_chime6()` 的查找顺序是 `chime6_v1/prepared/` → `downloads/chime6_v1.zip` →
+`downloads/chime6_v1/prepared/` → 官方流式下载；解压或复用前都会先跑 `verify_prepared()`
+的逐文件校验，被截断或改动过的副本会直接报错而不是污染评估集。原始的两个 tar.gz
+不能直接投喂，必须先经过 `prepare_chime6()`。
+
 ## 磁盘与运行提示
 
-- 压缩包合计约 10.9 GiB。数据准备还要写合并后的 FSD50K ZIP、`prepared/` 下挑选出的
-  音频以及特征文件，因此按[许可训练数据](licensed_training_data.md)所述预留约 40 GiB
-  空闲空间。
+- 上面 8 个压缩包合计约 **13.8 GiB**（约 14.8 GB），数据准备还要写合并后的 FSD50K ZIP、
+  `prepared/` 下挑选出的音频以及特征文件；notebook 建议至少预留 50 GB 空闲空间。
+  走 CHiME-6 流式下载时再额外准备约 12.5 GB 峰值缓存，成功后只保留 `prepared/`。
 - 请保留原始压缩包：`prepared/` 会对照它们做哈希校验，manifest 也记录了其 SHA-256。
   不要把原始 FSD50K 档案当作已清理子集分发——只有 `prepared/noise` 是逐文件核对过
   许可的，凭据是 `ATTRIBUTION.md` 和 `manifest.csv`。
+- 需要系统 `zip` 命令合并 FSD50K 分卷；WSL 下用 `sudo apt install zip`。

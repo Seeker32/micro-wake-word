@@ -1,6 +1,8 @@
 # basic_training_notebook 全流程
 
-本文对应 [`notebooks/basic_training_notebook.ipynb`](../notebooks/basic_training_notebook.ipynb) 当前代码，按从上到下的执行顺序说明环境、数据、训练、评估和归档。下面的 cell 编号从 0 开始，插入或删除单元格后可能变化。许可细节见 [licensed_training_data.md](licensed_training_data.md)，数据源见 [data_sources.md](data_sources.md)。
+本文对应 [`notebooks/basic_training_notebook.ipynb`](../notebooks/basic_training_notebook.ipynb) 当前代码，按从上到下的执行顺序说明环境、数据、训练、评估和归档。下面的 cell 编号从 0 开始，插入或删除单元格后可能变化。
+
+许可白名单与逐文件 lineage 由 `microwakeword/audio/licensed_data.py` 实施（见第 3 节），CHiME-6 的许可记录在 `microwakeword/audio/chime6.py`；数据源清单见 [data_sources.md](data_sources.md)，数据集组成见 [dataset_composition.zh.md](dataset_composition.zh.md)。
 
 ## 流程总览
 
@@ -21,9 +23,11 @@ Colab 默认仓库位于 `/content/micro-wake-word`；目录不存在时会克�
 
 ## 2. 合成正样本与困难负样本（cell 5–9）
 
-`load_clean100()` 下载或校验 Clean 100 模型及配置，先生成快、正常、慢三档试听：三档使用同一位说话人和同一噪声档，输出 `preview_dir/{fast,normal,slow}.wav`，并按 fast → normal → slow 拼成 `preview_dir/three_speeds.wav` 连播。正样本使用三档语速 `fast`、`normal`、`slow`，每档生成 1,000 条，共 3,000 条，保存于 `generated_samples/hi_circle/clean100_v1_three_speeds/`，并记录 `generation.json`。生成使用不同的说话人和合成参数；重跑会校验并复用匹配的结果。
+`load_clean100()` 下载或校验 Clean 100 模型及配置，先生成快、正常、慢三档试听：三档使用同一位说话人和同一噪声档，输出 `preview_dir/{fast,normal,slow}.wav`，并按 fast → normal → slow 拼成 `preview_dir/three_speeds.wav` 连播。正样本使用三档语速 `fast`、`normal`、`slow`，每档生成 1,000 条，共 3,000 条，保存于 `generated_samples/hi_circle/clean100_v1_three_speeds/`，并记录 `generation.json`。正式生成时按索引轮转 245 个说话人 ID 与 5 档 `noise_scale`，不是单说话人重复；重跑会按 `generation.json` 与逐档文件数校验并复用匹配的结果。
 
-`hey hi` 使用同一个模型，每档生成 1,000 条，按每档 800/100/100 划为 training、validation、testing，默认保存在 `generated_datasets/hey_hi_negative_clean100_v1/raw/`。随后 `prepare_hard_negative_features()` 按已有划分导出特征到 `features_v1/negative/hey_hi_clean100_v1/`，并验证来源与特征以支持复用。它使用 204 帧上下文；修改音素时，应按 notebook 注释更新数据版本，避免复用旧缓存。
+`hey hi` 使用同一个模型，每档生成 1,000 条，按每档 800/100/100 划为 training、validation、testing，默认保存在 `generated_datasets/hey_hi_negative_clean100_v1/raw/`。生成时有两条硬约束：每条音频的时长上限为 `((hey_hi_context_frames - 1) * 10 - 200) / 1000`，当前上下文下是 **1.83 秒**，超长会重新合成（最多 10 次尝试）；同一批次内按原始 PCM 的 SHA-256 去重。说话人 ID 与 5 档 `noise_scale` 按索引轮转，三档只改 `length_scale`。划分由 `Random(42)` 打乱后落到三个目录。
+
+随后 `prepare_hard_negative_features()` 按已有划分导出特征到 `features_v1/negative/hey_hi_clean100_v1/`，并验证来源与特征以支持复用。导出时每条音频先补到 3.2 秒（尾部留 0.2 秒静音）再算特征，得到 317 帧的轨道；训练配置用 `truncate_start` 取末 204 帧，因此“204 帧上下文”是截取结果，不是导出后的轨道长度。修改音素时，应按 notebook 注释更新数据版本，避免复用旧缓存。
 
 ## 3. 许可音频准备（cell 10–11）
 
@@ -43,7 +47,7 @@ Colab 默认仓库位于 `/content/micro-wake-word`；目录不存在时会克�
 
 每个 split 使用对应的 `noise/<split>` 作为背景池，RIR 共用。增广输出为 3.2 秒，背景噪声概率 0.75、RIR 0.5、Gain 1.0，其他音色扰动各为 0.1，背景信噪比范围为 -5 到 10 dB。试听单元生成并播放 `augmented_clip.wav`，可用于检查目标词是否清晰。
 
-特征步长为 10 ms，输出到 `features_v1/positive_hi_circle_clean100_v1_three_speeds/<split>/wakeword_mmap`。training 的 `repeat=2`、`slide_frames=10`；validation 为 1 和 10；testing 为 1 和 1。testing 使用流式模型，不做人工滑窗重复。
+特征步长为 10 ms，输出到 `features_v1/positive_hi_circle_clean100_v1_three_speeds/<split>/wakeword_mmap`。3.2 秒的增广片段产出 317 帧；`slide_frames=10` 会先丢掉尾部 9 帧，切成 10 个 308 帧的错位窗口，训练时再由 `truncate_start` 截成 204 帧。training 的 `repeat=2`、`slide_frames=10`；validation 为 1 和 10；testing 为 1 和 1。testing 使用流式模型，不做人工滑窗重复。
 
 ## 5. 普通负样本与 ambient 特征（cell 15）
 
@@ -51,11 +55,15 @@ Colab 默认仓库位于 `/content/micro-wake-word`；目录不存在时会克�
 
 validation 和 testing 额外生成 ambient 特征：只选满足最短时长条件的原始长片段，不做重复或 5 秒切块，写入 `features_v1/negative/ambient/{validation_ambient,testing_ambient}/`。它们只用于评估。`features_v1/feature_sources.json` 记录许可音频清单、正样本生成记录、增广来源及困难负样本信息。
 
+评估时 `ambient_eval.find_ambient_sets()` 会把 `negative/ambient/` 与第 6 节的 `negative/ambient_chime6/` 一起读出，所以 `validation_ambient`／`testing_ambient` 的每小时误唤醒（FAPH）是两处片段的合并结果，分母为合并后的背景时长。
+
 ## 6. CHiME-6 远场评估集（cell 16–17）
 
-CHiME-6 提供真实家庭远场录音，只进入 ambient 验证和测试，不参与训练采样。代码优先复用已校验的 `chime6_v1/prepared/`，其次从 `data_v1/downloads` 或可选 Drive 目录恢复 `chime6_v1.zip`／已解压数据，最后才从 OpenSLR 下载。Notebook 注释给出的下载量约 11.9 GB、峰值磁盘约 12 GB。
+CHiME-6 提供真实家庭远场录音，只进入 ambient 验证和测试，不参与训练采样。代码优先复用已校验的 `chime6_v1/prepared/`，其次从 `data_v1/downloads` 或可选 Drive 目录恢复 `chime6_v1.zip`／已解压数据，最后才从 OpenSLR 流式下载（可断点续传，读到所需阵列即停止，缓存用完即弃）。
 
-默认将官方 dev 映射到 `validation_ambient`、eval 映射到 `testing_ambient`，notebook 标注时长分别约 4.46 小时和 15.62 小时。准备过程选取参考阵列的 CH1、切成最长约 10 分钟的连续片段；特征生成保持这些片段完整，不做增广、重复或随机切块。特征和来源记录位于 `features_v1/negative/ambient_chime6/`，相同输入的已校验特征可复用。
+下载量要按两个子集算：`chime6.py` 的 `SUBSETS` 同时映射 dev 和 eval，因此 `CHiME6_dev.tar.gz`（约 11.25 GiB）与 `CHiME6_eval.tar.gz`（约 12.5 GB）都会被读取，实测网络流量约 20 GB；峰值磁盘约 12.5 GB，因为每个子集读完立即 `discard()`，不会同时留两份。train 压缩包（约 97 GB）不需要。
+
+默认将官方 dev 映射到 `validation_ambient`、eval 映射到 `testing_ambient`，实测时长分别约 4.46 小时（27 段）和 15.62 小时（96 段）。房间选择沿用 `prepare_chime6()` 的默认值 `dev_rooms="busiest"`、`eval_rooms="all"`、`channel="CH1"`、`segment_seconds=600`：dev 每个 session 只取信号最忙的 1 个房间（2 个阵列），eval 取全部房间（6 个阵列），这也解释了 validation 侧为什么只有 4.46 小时。特征生成保持这些片段完整，不做增广、重复或随机切块。特征和来源记录位于 `features_v1/negative/ambient_chime6/`，相同输入的已校验特征可复用。
 
 训练时 validation ambient 会整体载入，notebook 估计 CHiME-6 特征约占 1.2 GB，后续验证切片还会增加内存占用。内存不足时，可把准备调用改为：
 
@@ -80,6 +88,8 @@ chime6_lineage = prepare_ambient_features(
 | 原有 ambient、CHiME-6 ambient | 各 0 | 负 | `split` |
 
 非 ambient 权重总和为 19，训练时按权重抽取，约为 10.5% 正样本、52.6% 语音、26.3% 噪声、10.5% hey hi；实际 batch 会随机波动。`penalty_weight` 均为 1，正负类别权重分别为 1 和 20。主要参数为 10,000 steps、batch size 128、学习率 0.001、每 500 steps 验证一次、音频窗口 1,500 ms，SpecAugment 关闭。
+
+权重 0 只表示不进训练 batch：验证阶段会全量枚举所有特征组的 validation 侧，`validation_ambient`（含 CHiME-6）单独按 `split` 切窗计算 FAPH，二者都进入 `average_viable_recall` 等验证指标，因此 CHiME-6 会影响 `best_weights.weights.h5` 的挑选。
 
 当前 mixednet 的 stride 为 3、卷积上下文丢弃 154 帧；结合 10 ms 步长，配置检查得到输入上下文 204 帧。修改模型结构或窗口长度时，需同步检查 `hey_hi_context_frames` 并重新准备相应特征。
 

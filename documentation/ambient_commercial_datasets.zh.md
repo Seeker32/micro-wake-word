@@ -4,11 +4,23 @@
 
 术语约定：
 
-- **ambient 评估集**：原始 ≥6 s 连续音频（真实场景混响/多人对话/媒体人声），评估时按流式顺序拼接，不做增广改写。对应 `microwakeword/audio/licensed_data.py` 之外新增的 `negative/ambient` 评测面。
+- **ambient 评估集**：原始 ≥6 s 连续音频（真实场景混响/多人对话/媒体人声），评估时按流式顺序拼接，不做增广改写。现行实现由 `microwakeword/audio/ambient_features.py`（构建与校验）与 `microwakeword/audio/chime6.py`（CHiME-6）提供，落盘为 `features_v1/negative/ambient*`。
 - **训练背景池**：进增广器与噪声负样本池的音频，允许切段/混音/加混响等派生处理。
 - 核实日期：2026-11-11。所有「主源链接」均为调研当日实际访问并抓取原文的页面；无法访问的来源如实标注**「未能核实一手来源」**。
 
-> 本文件只做调研与接入规划，未修改任何代码。现行数据管线与许可白名单见 `microwakeword/audio/licensed_data.py`，现状说明见 [data_pipeline.zh.md](data_pipeline.zh.md)、[pre_downloaded_archives.md](pre_downloaded_archives.md)。
+> 本文是调研记录：许可结论与待核清单保持 2026-11-11 的原样。**落地状态见下一节**——CHiME-6 已接入，其余候选仍未接入。现行数据管线与许可白名单见 `microwakeword/audio/licensed_data.py`，现状说明见 [data_pipeline.zh.md](data_pipeline.zh.md)、[pre_downloaded_archives.md](pre_downloaded_archives.md)。
+
+## 0. 落地状态（2026-11-25）
+
+| 项目 | 状态 | 实现位置 |
+|---|---|---|
+| CHiME-6（SLR150）ambient 评估集 | **已接入** | `chime6.py`（准备/校验/评估）、notebook cell 16–17 与 22、`tests/test_chime6.py` |
+| 按 split 校验复用的 ambient 特征构建 | **已接入** | `ambient_features.py`（逐段 SHA-256、排序后构建、可复用） |
+| 汇总 FAPH（ambient + CHiME-6 合并） | **已接入** | notebook cell 20 的 `find_ambient_sets()` + 阈值曲线 |
+| FSD50K 许可白名单（CC0/CC-BY） | **已在用** | `licensed_data.py`：10,231 条 eval 中选 8,403 条，排除 1,828 条（1,425 BY-NC + 403 Sampling+） |
+| AMI / VOiCES / DEMAND / Freesound / MUSAN | 未接入（调研结论有效） | — |
+
+CHiME-6 的实际接入参数：官方 dev → `validation_ambient`（27 段，4.46 h），eval → `testing_ambient`（96 段，15.62 h）；`prepare_chime6()` 默认 `dev_rooms="busiest"`、`eval_rooms="all"`、`channel="CH1"`、`segment_seconds=600`、`min_seconds=6`，官方 session 不跨 split。
 
 ## 1. 结论速览表
 
@@ -16,7 +28,7 @@
 |---|---|---|---|---|---|
 | MUSAN (SLR17) | 数据集整体 CC BY 4.0；内含 FMA 音乐/LibriVox 语音/Freesound、SoundBible 噪声，逐源许可待审 | 有条件可用（整体声明已核，逐源 LICENSE 内文未能核实） | ≈109 h（论文口径） | 训练背景池（noise/music 部分） | 整体许可一手已核；语料内 LICENSE 未能核实 |
 | WHAM! Noise | CC BY-NC 4.0 | ❌ 不可商用（NC） | noise 包 17 GB→35 GB；48 kHz 全长版 68.1 GB→76 GB | 排除 | 一手已核 |
-| DiPCo / CHiME-5/6 | CHiME-6 (SLR150)：CC BY-SA 4.0；DiPCo 原发布声称 CDLA-Permissive 1.0 | 可商用（用 SLR150 版本；注意 ShareAlike 义务）；CDLA 声称未能核实 | 压缩包约 120 GB（97/11/12）；录音约 50 h | **ambient 评估集首选**（真实家庭多人对话） | SLR150 一手已核；CDLA 声称未能核实一手来源 |
+| DiPCo / CHiME-5/6 | CHiME-6 (SLR150)：CC BY-SA 4.0；DiPCo 原发布声称 CDLA-Permissive 1.0 | 可商用（用 SLR150 版本；注意 ShareAlike 义务）；CDLA 声称未能核实 | 压缩包约 120 GB（97/11/12）；实际只需 dev+eval 两个包（约 24 GB）；录音约 50 h | **已接入**：ambient 评估集首选（真实家庭多人对话） | SLR150 一手已核；CDLA 声称未能核实一手来源 |
 | Common Voice | 官方页面 JS 渲染，许可行未能抓取 | 待核（不可商用结论也不成立，只是未核实） | 每版本 ~20 h+ 英文朗读 | 训练语音负样本池（候选） | **未能核实一手来源** |
 | The People's Speech | 官方卡片：CC-BY 与 CC-BY-SA **混合子集**（2.0/2.5/3.0/4.0 家族） | 可商用（注意 CC-BY-SA 子集的 ShareAlike 传染） | 30,000+ h | 训练语音/对话负样本池 | 一手已核（MLCommons 官方 HF 卡片） |
 | GigaSpeech | 仓库 LICENSE 文件为 Apache 2.0；README 无数据集许可章节 | 音频重分发高风险（见 §5）；不建议商用产品数据源 | 10,000 h 转写 / 33,005 h 总量 | 仅限内部评估实验，谨慎 | 仓库 LICENSE 一手已核；数据集级许可声明缺失 |
@@ -61,14 +73,15 @@
 
 ### 2.3 DiPCo（Amazon Science）/ CHiME-5 / CHiME-6（SLR150）
 
-- DiPCo 主源：<https://www.amazon.science/publications/dipco-dinner-party-corpus>。该页面为论文发布页，**不含许可声明**（已核，页面仅含论文 PDF 下载与 BibTeX）；原始数据分发（`dipco-alignment` S3 桶）**已下线**（本次访问返回 `NoSuchBucket`，已核）。**仓库 `documentation/data_sources.md` 声称的 CDLA-Permissive 1.0：未能核实一手来源（原分发渠道不存在了）**。
+- DiPCo 主源：<https://www.amazon.science/publications/dipco-dinner-party-corpus>。该页面为论文发布页，**不含许可声明**（已核，页面仅含论文 PDF 下载与 BibTeX）；原始数据分发（`dipco-alignment` S3 桶）**已下线**（本次访问返回 `NoSuchBucket`，已核）。**旧版 `documentation/data_sources.md` 曾声称 CDLA-Permissive 1.0：该声称无法核实一手来源（原分发渠道不存在）；现该页已改为标注为“未核实、以 SLR150 替代”。**
 - 可商用替代主源：**OpenSLR SLR150 = CHiME-6 数据集**（即 DiPCo 同源录音的官方再发布）。页面：<https://www.openslr.org/150/>，License 字段：**Attribution-ShareAlike 4.0 (CC BY-SA 4.0 International)**；页面提供逐文件 `LICENSE.txt`（<https://openslr.trmal.net/resources/150/LICENSE.txt>，全文为 CC BY-SA 4.0 法律文本，要求引用 Barker et al., Interspeech 2018）。
 - CHiME-5 官方 Datasets 页：<https://chimechallenge.org/datasets/chime5>，原文："**As of 1st Jan 2024, the CHiME-5 dataset has been re-issued under a standard CC BY-SA 4.0 license, and is free for both academic and commercial purposes.**"（并提示 CHiME-6 修复了原 CHiME-5 的阵列同步问题，新工作建议用 CHiME-6。）
 - **许可结论：商用可用，许可 CC BY-SA 4.0（主源已核：https://www.openslr.org/150/ 与 https://chimechallenge.org/datasets/chime5）。注意 ShareAlike：若对外分发衍生数据需同许可；仅内部评估/训练无再分发义务问题。**
 - 内容类型：真实家庭餐厅场景 **4 人自然多人对话**（Amazon 雇员志愿者），近讲单麦 + 5 组 7 麦远场阵列（Amazon Science 页面描述原文）。正好命中"真实室内多人对话"缺口。
 - 规模：SLR150 提供 `CHiME6_train.tar.gz` 97 GB、`CHiME6_dev.tar.gz` 11 GB、`CHiME6_eval.tar.gz` 12 GB（官方页 2026-11-11 实时核对，下载合计约 120 GB；另有 transcriptions 2.4 MB、floorplans 1.4 MB）。音频内容：20 场真实家庭晚餐聚会（每场 ≥2 h，约 2–2.5 h），官方口径标注语音时长 train 40:33 h / dev 4:27 h / eval 5:12 h，总录音约 50 h；每场含多通道阵列（16 kHz WAV），取单通道远场即有约 20 × 2.4 h ≈ 48 h 可用素材。
 - 下载形态：tar.gz 直链，无注册、无 EULA（旧 CHiME-5 的注册/EULA 流程已被 2024 再发布取代）。
-- 用途建议：**ambient 评估集首选**。取远场阵列单通道（更接近智能音箱收音），原始 ≥6 s 片段直接流式拼接；同一 session 不跨 split。也适合训练背景池（可整段混入）。
+- 用途建议：**已接入**（ambient 评估集）。取远场阵列单通道（更接近智能音箱收音），原始 ≥6 s 片段直接流式拼接；同一 session 不跨 split。也适合训练背景池（可整段混入）。
+- **实际接入口径（2026-11-25）**：只流式读取 dev 与 eval 两个压缩包（`SUBSETS = {"dev": "validation", "eval": "testing"}`），train 的 97 GB **不需要**；`stream_subset()` 读到所需阵列即停止，实测流量约 20 GB、峰值缓存约 12.5 GB，缓存用完即弃。默认 `dev_rooms="busiest"`（每 session 1 个房间）、`eval_rooms="all"`、`channel="CH1"`、`segment_seconds=600`，得到 validation 27 段 / 4.46 h、testing 96 段 / 15.62 h。来源记录写入 `chime6_v1/prepared/manifest.json`（含逐段 sha256、阵列选择与 SLR150 压缩包元数据）。
 - 接入归档要求：manifest 记 `dataset="CHiME-6 (OpenSLR SLR150)"`、`license_url="https://creativecommons.org/licenses/by-sa/4.0/"`、`source_url` 指向 SLR150 页、`author="CHiME consortium (Barker et al. 2018)"`；`sources/` 存 SLR150 `LICENSE.txt` 快照；ATTRIBUTION 按 LICENSE.txt 要求引用 Barker et al. 2018 论文。
 
 ### 2.4 Common Voice（Mozilla）
@@ -179,7 +192,7 @@
 
 1. **WHAM! = CC BY-NC 4.0：正确**（主源 https://wham.whisper.ai/ License 区块，NC 徽章 + 全文链接；不是 BY）。
 2. **VOiCES = CC BY 4.0：正确**（主源 https://iqtlabs.github.io/voices/，两次明确 "free for commercial, academic, and government use"）。
-3. **DiPCo = CDLA-Permissive 1.0：未能核实一手来源**——Amazon Science 页面无许可声明，原分发 S3 桶已下线。建议文档改指向 SLR150 CHiME-6 的 **CC BY-SA 4.0**（已核），并注明 DiPCo 原许可声明已不可考。
+3. **DiPCo = CDLA-Permissive 1.0：未能核实一手来源**——Amazon Science 页面无许可声明，原分发 S3 桶已下线。**已按建议落地**：`data_sources.md` 现已改指向 SLR150 CHiME-6 的 **CC BY-SA 4.0**（已核），并注明 DiPCo 原许可声明已不可考、当前管线使用 SLR150 版本。
 
 ## 5. 商用风险提示（宽松声明 + YouTube/第三方来源）
 
@@ -204,7 +217,7 @@
 
 | 来源 | 内容类型 | 许可 | 备注 |
 |---|---|---|---|
-| CHiME-6 (SLR150) | 家庭 4 人晚餐多人对话（远场阵列） | CC BY-SA 4.0 | 首选；取远场单通道；同 session 不跨 split；SA 义务只影响对外分发 |
+| CHiME-6 (SLR150) | 家庭 4 人晚餐多人对话（远场阵列） | CC BY-SA 4.0 | **已接入**（dev→validation 4.46 h、eval→testing 15.62 h，CH1、600 s、session 不跨 split）；SA 义务只影响对外分发 |
 | AMI Meeting Corpus | 办公室多人会议（近讲 + 远场阵列） | CC BY 4.0 | 与现有 LibriSpeech CC BY 4.0 白名单一致，接入摩擦最小 |
 | VOiCES | 真实房间远场语音 + HVAC 等真实背景 | CC BY 4.0 | 覆盖"单人在真实房间说话"面；引用 Richey et al. 2018 |
 
